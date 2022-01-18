@@ -1,4 +1,4 @@
-pub const NVGwrapper = struct {
+pub const Wrapper = struct {
     raw: *NVGcontext,
     backend: Backend,
 
@@ -7,7 +7,7 @@ pub const NVGwrapper = struct {
         UnimplementedBackend,
     };
 
-    pub fn init(backend: Backend, flags: []const CreationFlags) !NVGwrapper {
+    pub fn init(backend: Backend, flags: []const CreationFlags) !Wrapper {
         var flag_bitfield: c_int = 0;
         for (flags) |f| {
             flag_bitfield |= @as(c_int, 1) << @enumToInt(f);
@@ -20,13 +20,13 @@ pub const NVGwrapper = struct {
             else => return error.UnimplementedBackend,
         };
 
-        return NVGwrapper {
+        return Wrapper {
             .raw = ctx,
             .backend = backend,
         };
     }
 
-    pub fn delete(self: NVGwrapper) void {
+    pub fn delete(self: Wrapper) void {
         switch (self.backend) {
             .GL3 => nvgDeleteGL3(self.raw),
             else => unreachable,
@@ -35,15 +35,15 @@ pub const NVGwrapper = struct {
 
     // Frame operations
 
-    pub fn beginFrame(self: NVGwrapper, window_width: f32, window_height: f32, device_pixel_ratio: f32) void {
+    pub fn beginFrame(self: Wrapper, window_width: f32, window_height: f32, device_pixel_ratio: f32) void {
         nvgBeginFrame(self.raw, window_width, window_height, device_pixel_ratio);
     }
 
-    pub fn cancelFrame(self: NVGwrapper) void {
+    pub fn cancelFrame(self: Wrapper) void {
         nvgCancelFrame(self.raw);
     }
 
-    pub fn endFrame(self: NVGwrapper) void {
+    pub fn endFrame(self: Wrapper) void {
         nvgEndFrame(self.raw);
     }
 
@@ -51,91 +51,91 @@ pub const NVGwrapper = struct {
 
     // State Handling
 
-    pub fn save(self: NVGwrapper) void {
+    pub fn save(self: Wrapper) void {
         nvgSave(self.raw);
     }
 
-    pub fn restore(self: NVGwrapper) void {
+    pub fn restore(self: Wrapper) void {
         nvgRestore(self.raw);
     }
 
-    pub fn reset(self: NVGwrapper) void {
+    pub fn reset(self: Wrapper) void {
         nvgReset(self.raw);
     }
 
     // Render styles
 
-    pub fn shapeAntiAlias(self: NVGwrapper, enabled: bool) void {
+    pub fn shapeAntiAlias(self: Wrapper, enabled: bool) void {
         nvgShapeAntiAlias(self.raw, @boolToInt(enabled));
     }
 
-    pub fn strokeColor(self: NVGwrapper, color: NVGcolor) void {
+    pub fn strokeColor(self: Wrapper, color: NVGcolor) void {
         nvgStrokeColor(self.raw, color);
     }
 
-    pub fn strokePaint(self: NVGwrapper, paint: NVGpaint) void {
+    pub fn strokePaint(self: Wrapper, paint: NVGpaint) void {
         nvgStrokePaint(self.raw, paint);
     }
 
-    pub fn fillColor(self: NVGwrapper, color: NVGcolor) void {
+    pub fn fillColor(self: Wrapper, color: NVGcolor) void {
         nvgFillColor(self.raw, color);
     }
 
-    pub fn fillPaint(self: NVGwrapper, paint: NVGpaint) void {
+    pub fn fillPaint(self: Wrapper, paint: NVGpaint) void {
         nvgFillPaint(self.raw, paint);
     }
 
-    pub fn miterLimit(self: NVGwrapper, limit: f32) void {
+    pub fn miterLimit(self: Wrapper, limit: f32) void {
         nvgMiterLimit(self.raw, limit);
     }
 
-    pub fn strokeWidth(self: NVGwrapper, size: f32) void {
+    pub fn strokeWidth(self: Wrapper, size: f32) void {
         nvgStrokeWidth(self.raw, size);
     }
 
-    pub fn lineCap(self: NVGwrapper, cap: LineCap) void {
+    pub fn lineCap(self: Wrapper, cap: LineCap) void {
         nvgLineCap(self.raw, @enumToInt(cap));
     }
 
-    pub fn lineJoin(self: NVGwrapper, join: LineJoin) void {
+    pub fn lineJoin(self: Wrapper, join: LineJoin) void {
         nvgLineJoin(self.raw, @enumToInt(join));
     }
 
-    pub fn globalAlpha(self: NVGwrapper, alpha: f32) void {
+    pub fn globalAlpha(self: Wrapper, alpha: f32) void {
         nvgGlobalAlpha(self.raw, alpha);
     }
 
     // Transforms
 
-    pub fn ResetTransform(self: NVGwrapper) void {
+    pub fn ResetTransform(self: Wrapper) void {
         nvgResetTransform(self.raw);
     }
 
-    pub fn Transform(self: NVGwrapper, a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) void {
+    pub fn Transform(self: Wrapper, a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) void {
         nvgTransform(self.raw, a, b, c, d, e, f);
     }
 
-    pub fn Translate(self: NVGwrapper, x: f32, y: f32) void {
+    pub fn Translate(self: Wrapper, x: f32, y: f32) void {
         nvgTranslate(self.raw, x, y);
     }
 
-    pub fn Rotate(self: NVGwrapper, angle: f32) void {
+    pub fn Rotate(self: Wrapper, angle: f32) void {
         nvgRotate(self.raw, angle);
     }
 
-    pub fn SkewX(self: NVGwrapper, angle: f32) void {
+    pub fn SkewX(self: Wrapper, angle: f32) void {
         nvgSkewX(self.raw, angle);
     }
 
-    pub fn SkewY(self: NVGwrapper, angle: f32) void {
+    pub fn SkewY(self: Wrapper, angle: f32) void {
         nvgSkewY(self.raw, angle);
     }
 
-    pub fn Scale(self: NVGwrapper, x: f32, y: f32) void {
+    pub fn Scale(self: Wrapper, x: f32, y: f32) void {
         nvgScale(self.raw, x, y);
     }
 
-    pub fn CurrentTransform(self: NVGwrapper, xform: [*]f32) void {
+    pub fn CurrentTransform(self: Wrapper, xform: [*]f32) void {
         nvgCurrentTransform(self.raw, xform);
     }
 
@@ -148,93 +148,93 @@ pub const NVGwrapper = struct {
         }
     }
 
-    pub fn createImage(self: NVGwrapper, filename: []const u8, image_flags: []const ImageFlags) c_int {
+    pub fn createImage(self: Wrapper, filename: []const u8, image_flags: []const ImageFlags) c_int {
         return nvgCreateImage(self.raw, filename, combine_flags(image_flags));
     }
 
-    pub fn createImageMem(self: NVGwrapper, image_flags: []const ImageFlags, data: []u8) c_int {
+    pub fn createImageMem(self: Wrapper, image_flags: []const ImageFlags, data: []u8) c_int {
         return nvgCreateImageMem(self.raw, combine_flags(image_flags), data.ptr, data.len);
     }
 
-    pub fn createImageRGBA(self: NVGwrapper, w: c_int, h: c_int, image_flags: []const ImageFlags, data: []const u8) c_int {
+    pub fn createImageRGBA(self: Wrapper, w: c_int, h: c_int, image_flags: []const ImageFlags, data: []const u8) c_int {
         return nvgCreateImageRGBA(self.raw, w, h, combine_flags(image_flags), data.ptr);
     }
 
-    pub fn updateImage(self: NVGwrapper, image: c_int, data: []const u8) void {
+    pub fn updateImage(self: Wrapper, image: c_int, data: []const u8) void {
         nvgUpdateImage(self.raw, image, data);
     }
 
-    pub fn imageSize(self: NVGwrapper, image: c_int, w: *c_int, h: *c_int) void {
+    pub fn imageSize(self: Wrapper, image: c_int, w: *c_int, h: *c_int) void {
         nvgImageSize(self.raw, image, w, h);
     }
 
-    pub fn deleteImage(self: NVGwrapper, image: c_int) void {
+    pub fn deleteImage(self: Wrapper, image: c_int) void {
         nvgDeleteImage(self.raw, image);
     }
 
     // Paints
 
-    pub fn linearGradient(self: NVGwrapper, sx: f32, sy: f32, ex: f32, ey: f32, icol: NVGcolor, ocol: NVGcolor) NVGpaint {
+    pub fn linearGradient(self: Wrapper, sx: f32, sy: f32, ex: f32, ey: f32, icol: NVGcolor, ocol: NVGcolor) NVGpaint {
         return nvgLinearGradient(self.raw, sx, sy, ex, ey, icol, ocol);
     }
 
-    pub fn boxGradient(self: NVGwrapper, x: f32, y: f32, w: f32, h: f32, r: f32, f: f32, icol: NVGcolor, ocol: NVGcolor) NVGpaint {
+    pub fn boxGradient(self: Wrapper, x: f32, y: f32, w: f32, h: f32, r: f32, f: f32, icol: NVGcolor, ocol: NVGcolor) NVGpaint {
         return nvgBoxGradient(self.raw, x, y, w, h, r, f, icol, ocol);
     }
 
-    pub fn radialGradient(self: NVGwrapper, cx: f32, cy: f32, inr: f32, outr: f32, icol: NVGcolor, ocol: NVGcolor) NVGpaint {
+    pub fn radialGradient(self: Wrapper, cx: f32, cy: f32, inr: f32, outr: f32, icol: NVGcolor, ocol: NVGcolor) NVGpaint {
         return nvgRadialGradient(self.raw, cx, cy, inr, outr, icol, ocol);
     }
 
-    pub fn imagePattern(self: NVGwrapper, ox: f32, oy: f32, ex: f32, ey: f32, angle: f32, image: c_int, alpha: f32) NVGpaint {
+    pub fn imagePattern(self: Wrapper, ox: f32, oy: f32, ex: f32, ey: f32, angle: f32, image: c_int, alpha: f32) NVGpaint {
         return nvgImagePattern(self.raw, ox, oy, ex, ey, angle, image, alpha);
     }
 
     // Scissoring
 
-    pub fn scissor(self: NVGwrapper, x: f32, y: f32, w: f32, h: f32) void {
+    pub fn scissor(self: Wrapper, x: f32, y: f32, w: f32, h: f32) void {
         nvgScissor(self.raw, x, y, w, h);
     }
 
-    pub fn intersectScissor(self: NVGwrapper, x: f32, y: f32, w: f32, h: f32) void {
+    pub fn intersectScissor(self: Wrapper, x: f32, y: f32, w: f32, h: f32) void {
         nvgIntersectScissor(self.raw, x, y, w, h);
     }
 
-    pub fn resetScissor(self: NVGwrapper) void {
+    pub fn resetScissor(self: Wrapper) void {
         nvgResetScissor(self.raw);
     }
 
     // Paths
 
-    pub fn beginPath(self: NVGwrapper) void {
+    pub fn beginPath(self: Wrapper) void {
         nvgBeginPath(self.raw);
     }
 
-    pub fn moveTo(self: NVGwrapper, x: f32, y: f32) void {
+    pub fn moveTo(self: Wrapper, x: f32, y: f32) void {
         nvgMoveTo(self.raw, x, y);
     }
 
-    pub fn lineTo(self: NVGwrapper, x: f32, y: f32) void {
+    pub fn lineTo(self: Wrapper, x: f32, y: f32) void {
         nvgLineTo(self.raw, x, y);
     }
 
-    pub fn bezierTo(self: NVGwrapper, c1x: f32, c1y: f32, c2x: f32, c2y: f32, x: f32, y: f32) void {
+    pub fn bezierTo(self: Wrapper, c1x: f32, c1y: f32, c2x: f32, c2y: f32, x: f32, y: f32) void {
         nvgBezierTo(self.raw, c1x, c1y, c2x, c2y, x, y);
     }
 
-    pub fn quadTo(self: NVGwrapper, cx: f32, cy: f32, x: f32, y: f32) void {
+    pub fn quadTo(self: Wrapper, cx: f32, cy: f32, x: f32, y: f32) void {
         nvgQuadTo(self.raw, cx, cy, x, y);
     }
 
-    pub fn arcTo(self: NVGwrapper, x1: f32, y1: f32, x2: f32, y2: f32, radius: f32) void {
+    pub fn arcTo(self: Wrapper, x1: f32, y1: f32, x2: f32, y2: f32, radius: f32) void {
         nvgArcTo(self.raw, x1, y1, x2, y2, radius);
     }
 
-    pub fn closePath(self: NVGwrapper) void {
+    pub fn closePath(self: Wrapper) void {
         nvgClosePath(self.raw);
     }
 
-    pub fn pathWinding(self: NVGwrapper, dir: PathWinding) void {
+    pub fn pathWinding(self: Wrapper, dir: PathWinding) void {
         const winding = switch(dir) {
             .ccw, .solid => 1,
             .cw, .hole => 2,
@@ -243,20 +243,20 @@ pub const NVGwrapper = struct {
         nvgPathWinding(self.raw, winding);
     }
 
-    pub fn arc(self: NVGwrapper, cx: f32, cy: f32, r: f32, a0: f32, a1: f32, dir: c_int) void {
+    pub fn arc(self: Wrapper, cx: f32, cy: f32, r: f32, a0: f32, a1: f32, dir: c_int) void {
         nvgArc(self.raw, cx, cy, r, a0, a1, dir);
     }
 
-    pub fn rect(self: NVGwrapper, x: f32, y: f32, w: f32, h: f32) void {
+    pub fn rect(self: Wrapper, x: f32, y: f32, w: f32, h: f32) void {
         nvgRect(self.raw, x, y, w, h);
     }
 
-    pub fn roundedRect(self: NVGwrapper, x: f32, y: f32, w: f32, h: f32, r: f32) void {
+    pub fn roundedRect(self: Wrapper, x: f32, y: f32, w: f32, h: f32, r: f32) void {
         nvgRoundedRect(self.raw, x, y, w, h, r);
     }
 
     pub fn roundedRectVarying(
-        self: NVGwrapper,
+        self: Wrapper,
         x: f32,
         y: f32,
         w: f32,
@@ -270,113 +270,113 @@ pub const NVGwrapper = struct {
             rad_bottom_right, rad_bottom_left);
     }
 
-    pub fn ellipse(self: NVGwrapper, cx: f32, cy: f32, rx: f32, ry: f32) void {
+    pub fn ellipse(self: Wrapper, cx: f32, cy: f32, rx: f32, ry: f32) void {
         nvgEllipse(self.raw, cx, cy, rx, ry);
     }
 
-    pub fn circle(self: NVGwrapper, cx: f32, cy: f32, r: f32) void {
+    pub fn circle(self: Wrapper, cx: f32, cy: f32, r: f32) void {
         nvgCircle(self.raw, cx, cy, r);
     }
 
-    pub fn fill(self: NVGwrapper) void {
+    pub fn fill(self: Wrapper) void {
         nvgFill(self.raw);
     }
 
-    pub fn stroke(self: NVGwrapper) void {
+    pub fn stroke(self: Wrapper) void {
         nvgStroke(self.raw);
     }
 
     // Text
 
-    pub fn createFont(self: NVGwrapper, name: []const u8, filename: []const u8) c_int {
+    pub fn createFont(self: Wrapper, name: []const u8, filename: []const u8) c_int {
         nvgCreateFont(self.raw, name, filename);
     }
 
-    pub fn createFontAtIndex(self: NVGwrapper, name: []const u8, filename: []const u8, font_index: c_int) c_int {
+    pub fn createFontAtIndex(self: Wrapper, name: []const u8, filename: []const u8, font_index: c_int) c_int {
         nvgCreateFontAtIndex(self.raw, name, filename, font_index);
     }
 
-    pub fn createFontMem(self: NVGwrapper, name: []const u8, data: []u8, ndata: c_int, free_data: c_int) c_int {
+    pub fn createFontMem(self: Wrapper, name: []const u8, data: []u8, ndata: c_int, free_data: c_int) c_int {
         nvgCreateFontMem(self.raw, name, data, ndata, free_data);
     }
 
-    pub fn createFontMemAtIndex(self: NVGwrapper, name: []const u8, data: []u8, ndata: c_int, free_data: c_int, font_index: c_int) c_int {
+    pub fn createFontMemAtIndex(self: Wrapper, name: []const u8, data: []u8, ndata: c_int, free_data: c_int, font_index: c_int) c_int {
         nvgCreateFontMemAtIndex(self.raw, name, data, ndata, free_data, font_index);
     }
 
-    pub fn findFont(self: NVGwrapper, name: []const u8) c_int {
+    pub fn findFont(self: Wrapper, name: []const u8) c_int {
         nvgFindFont(self.raw, name);
     }
 
-    pub fn addFallbackFontId(self: NVGwrapper, base_font: c_int, fallback_font: c_int) c_int {
+    pub fn addFallbackFontId(self: Wrapper, base_font: c_int, fallback_font: c_int) c_int {
         nvgAddFallbackFontId(self.raw, base_font, fallback_font);
     }
 
-    pub fn addFallbackFont(self: NVGwrapper, base_font: []const u8, fallback_font: []const u8) c_int {
+    pub fn addFallbackFont(self: Wrapper, base_font: []const u8, fallback_font: []const u8) c_int {
         nvgAddFallbackFont(self.raw, base_font, fallback_font);
     }
 
-    pub fn resetFallbackFontsId(self: NVGwrapper, base_font: c_int) void {
+    pub fn resetFallbackFontsId(self: Wrapper, base_font: c_int) void {
         nvgResetFallbackFontsId(self.raw, base_font);
     }
 
-    pub fn resetFallbackFonts(self: NVGwrapper, base_font: []const u8) void {
+    pub fn resetFallbackFonts(self: Wrapper, base_font: []const u8) void {
         nvgResetFallbackFonts(self.raw, base_font);
     }
 
-    pub fn fontSize(self: NVGwrapper, size: f32) void {
+    pub fn fontSize(self: Wrapper, size: f32) void {
         nvgFontSize(self.raw, size);
     }
 
-    pub fn fontBlur(self: NVGwrapper, blur: f32) void {
+    pub fn fontBlur(self: Wrapper, blur: f32) void {
         nvgFontBlur(self.raw, blur);
     }
 
-    pub fn textLetterSpacing(self: NVGwrapper, spacing: f32) void {
+    pub fn textLetterSpacing(self: Wrapper, spacing: f32) void {
         nvgTextLetterSpacing(self.raw, spacing);
     }
 
-    pub fn textLineHeight(self: NVGwrapper, line_height: f32) void {
+    pub fn textLineHeight(self: Wrapper, line_height: f32) void {
         nvgTextLineHeight(self.raw, line_height);
     }
 
-    pub fn textAlign(self: NVGwrapper, alignment: TextAlign) void {
+    pub fn textAlign(self: Wrapper, alignment: TextAlign) void {
         nvgTextAlign(self.raw, @as(c_int, 1) << @enumToInt(alignment));
     }
 
-    pub fn fontFaceId(self: NVGwrapper, font: c_int) void {
+    pub fn fontFaceId(self: Wrapper, font: c_int) void {
         nvgFontFaceId(self.raw, font);
     }
 
-    pub fn fontFace(self: NVGwrapper, font: []const u8) void {
+    pub fn fontFace(self: Wrapper, font: []const u8) void {
         nvgFontFace(self.raw, font);
     }
 
-    pub fn text(self: NVGwrapper, x: f32, y: f32, string: []const u8, end: []const u8) f32 {
+    pub fn text(self: Wrapper, x: f32, y: f32, string: []const u8, end: []const u8) f32 {
         nvgText(self.raw, x, y, string, end);
     }
 
-    pub fn textBox(self: NVGwrapper, x: f32, y: f32, break_row_width: f32, string: []const u8, end: []const u8) void {
+    pub fn textBox(self: Wrapper, x: f32, y: f32, break_row_width: f32, string: []const u8, end: []const u8) void {
         nvgTextBox(self.raw, x, y, break_row_width, string, end);
     }
 
-    pub fn textBounds(self: NVGwrapper, x: f32, y: f32, string: []const u8, end: []const u8, bounds: *f32) f32 {
+    pub fn textBounds(self: Wrapper, x: f32, y: f32, string: []const u8, end: []const u8, bounds: *f32) f32 {
         nvgTextBounds(self.raw, x, y, string, end, bounds);
     }
 
-    pub fn textBoxBounds(self: NVGwrapper, x: f32, y: f32, break_row_width: f32, string: []const u8, end: []const u8, bounds: *f32) void {
+    pub fn textBoxBounds(self: Wrapper, x: f32, y: f32, break_row_width: f32, string: []const u8, end: []const u8, bounds: *f32) void {
         nvgTextBoxBounds(self.raw, x, y, break_row_width, string, end, bounds);
     }
 
-    pub fn textGlyphPositions(self: NVGwrapper, x: f32, y: f32, string: []const u8, end: []const u8, positions: *NVGglyphPosition, max_positions: c_int) c_int {
+    pub fn textGlyphPositions(self: Wrapper, x: f32, y: f32, string: []const u8, end: []const u8, positions: *NVGglyphPosition, max_positions: c_int) c_int {
         nvgTextGlyphPositions(self.raw, x, y, string, end, positions, max_positions);
     }
 
-    pub fn textMetrics(self: NVGwrapper, ascender: *f32, descender: *f32, lineh: *f32) void {
+    pub fn textMetrics(self: Wrapper, ascender: *f32, descender: *f32, lineh: *f32) void {
         nvgTextMetrics(self.raw, ascender, descender, lineh);
     }
 
-    pub fn textBreakLines(self: NVGwrapper, string: []const u8, end: []const u8, break_row_width: f32, rows: *NVGtextRow, max_rows: c_int) c_int {
+    pub fn textBreakLines(self: Wrapper, string: []const u8, end: []const u8, break_row_width: f32, rows: *NVGtextRow, max_rows: c_int) c_int {
         nvgTextBreakLines(self.raw, string, end, break_row_width, rows, max_rows);
     }
 };

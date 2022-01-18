@@ -1,7 +1,8 @@
 pub fn Vec2(comptime T: type) type {
-    const Self = @This();
 
     return struct {
+        const Self = @This();
+
         x: T,
         y: T,
 
@@ -61,6 +62,10 @@ pub fn Vec2(comptime T: type) type {
                 .x = v.x / l,
                 .y = v.y / l,
             };
+        }
+
+        pub fn tangent(v0: Self, v1: Self) Self {
+            return v1.sub(v0).norm();
         }
     };
 }
