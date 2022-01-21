@@ -4,8 +4,9 @@ const gl = @import("zgl");
 
 const nanovg = @import("nanovg.zig");
 const vec = @import("vec.zig");
+const BezierFit = @import("bezier_fit.zig");
 
-const Vec2 = vec.Vec2(f64);
+pub const Vec2 = vec.Vec2(f64);
 
 const WIDTH = 800;
 const HEIGHT = 600;
@@ -29,6 +30,11 @@ fn keyCallback(
                 vn.view.origin = .{ .x = 0, .y = 0 };
                 vn.view.scale = 1.0;
             },
+
+            .p => std.debug.print("{any}\n", .{vn.paths.items[vn.paths.items.len-1].items}),
+
+            .d => vn.debug = !vn.debug,
+
             else => {},
         },
 
@@ -47,7 +53,7 @@ fn cursorPosCallback(window: glfw.Window, xpos: f64, ypos: f64) void {
     const MouseButton = glfw.mouse_button.MouseButton;
     if (vn.mouse.states[@enumToInt(MouseButton.left)] == .press) {
         const points = vn.points.items;
-        const min_dist = 8.0;
+        const min_dist = 2.0;
 
         const mouse_canvas = vn.view.viewToCanvas(vn.mouse.pos);
         if (mouse_canvas.distSqr(points[points.len-1]) >=
@@ -81,15 +87,35 @@ fn mouseButtonCallback(
 
     switch (button) {
         .left => switch (action) {
-            .press => vn.points.append(vn.view.viewToCanvas(vn.mouse.pos))
-                catch unreachable,
+            .press => {
+                vn.points.clearRetainingCapacity();
+
+                vn.points.append(vn.view.viewToCanvas(vn.mouse.pos))
+                    catch unreachable;
+            },
+
+            .release => {
+                const p_prev = vn.points.items[vn.points.items.len-1];
+                const p = vn.view.viewToCanvas(vn.mouse.pos);
+                if (p_prev.x != p.x and p_prev.y != p.y) {
+                    vn.points.append(p)
+                        catch unreachable;
+                }
+
+                if (vn.points.items.len > 1) {
+                    const fitted = vn.bezier_fit.fit(vn.points.items, vn.view.scale);
+                    vn.paths.append(fitted) catch unreachable;
+                }
+
+                //vn.points.clearRetainingCapacity();
+            },
+
             else => {},
         },
 
         .middle => switch (action) {
             .press => {
                 vn.mouse.pos_pan_start = vn.mouse.pos;
-                std.log.info("Started panning", .{});
             },
             else => {},
         },
@@ -126,6 +152,8 @@ fn framebufferSizeCallback(window: glfw.Window, width: u32, height: u32) void {
     vn.view.height = height;
 }
 
+const Path = std.ArrayList(Vec2);
+
 const VnCtx = struct {
     allocator: std.mem.Allocator,
 
@@ -154,9 +182,14 @@ const VnCtx = struct {
         states: [NUM_MOUSE_STATES]glfw.Action,
     },
 
-    points: std.ArrayList(Vec2),
+    points: Path,
+    paths: std.ArrayList(Path),
 
-    pub fn init(allocator: std.mem.Allocator, vg: nanovg.Wrapper, width: u32, height: u32) VnCtx {
+    bezier_fit: BezierFit,
+
+    debug: bool = false,
+
+    pub fn init(allocator: std.mem.Allocator, vg: nanovg.Wrapper, width: u32, height: u32, fitting_params: BezierFit.Config) VnCtx {
         return VnCtx {
             .allocator = allocator,
             .vg = vg,
@@ -171,12 +204,87 @@ const VnCtx = struct {
                 .pos_pan_start = undefined,
                 .states = undefined,
             },
-            .points = std.ArrayList(Vec2).init(allocator),
+
+            .points = Path.init(allocator),
+            .paths = std.ArrayList(Path).init(allocator),
+
+            .bezier_fit = BezierFit.init(allocator, fitting_params),
         };
     }
 
     pub fn deinit(self: VnCtx) void {
         self.points.deinit();
+
+        for (self.paths) |path| {
+            path.deinit();
+        }
+        self.paths.deinit();
+    }
+
+    fn drawLines(vn: VnCtx, data: []const Vec2) void {
+        vn.vg.beginPath();
+
+        const p = vn.view.canvasToView(data[0]);
+        vn.vg.moveTo(@floatCast(f32, p.x), @floatCast(f32, p.y));
+
+        for (data[1..]) |point| {
+            const p_screen = vn.view.canvasToView(point);
+            vn.vg.lineTo(@floatCast(f32, p_screen.x), @floatCast(f32, p_screen.y));
+        }
+        vn.vg.stroke();
+    }
+
+    fn drawBezier(vn: VnCtx, data: []const Vec2) void {
+        vn.vg.beginPath();
+
+        const p = vn.view.canvasToView(data[0]);
+        vn.vg.moveTo(@floatCast(f32, p.x), @floatCast(f32, p.y));
+
+        // Convert Vec2 slice into slice of [4]Vec2s and loop over it
+        for (@ptrCast([*]const [3]Vec2, data[1..])[0..data.len/3]) |points| {
+            const p0 = vn.view.canvasToView(points[0]);
+            const p1 = vn.view.canvasToView(points[1]);
+            const p2 = vn.view.canvasToView(points[2]);
+
+            vn.vg.bezierTo(
+                @floatCast(f32, p0.x), @floatCast(f32, p0.y),
+                @floatCast(f32, p1.x), @floatCast(f32, p1.y),
+                @floatCast(f32, p2.x), @floatCast(f32, p2.y));
+        }
+        vn.vg.stroke();
+    }
+
+    fn drawCtrl(vn: VnCtx, data: []const Vec2) void {
+        {
+            var i: usize = 0;
+            while ((i+3) < data.len) : (i += 3) {
+                const p0 = vn.view.canvasToView(data[i]);
+                const p1 = vn.view.canvasToView(data[i+1]);
+                const p2 = vn.view.canvasToView(data[i+2]);
+                const p3 = vn.view.canvasToView(data[i+3]);
+
+                vn.vg.strokeColor(nanovg.nvgRGBA(30, 255, 255, 255));
+                vn.vg.strokeWidth(1.0);
+
+                vn.vg.beginPath();
+                vn.vg.moveTo(@floatCast(f32, p0.x), @floatCast(f32, p0.y));
+                vn.vg.lineTo(@floatCast(f32, p1.x), @floatCast(f32, p1.y));
+                vn.vg.stroke();
+
+                vn.vg.beginPath();
+                vn.vg.moveTo(@floatCast(f32, p2.x), @floatCast(f32, p2.y));
+                vn.vg.lineTo(@floatCast(f32, p3.x), @floatCast(f32, p3.y));
+                vn.vg.stroke();
+            }
+        }
+
+        for (data) |p_canvas| {
+            const p = vn.view.canvasToView(p_canvas);
+            vn.vg.beginPath();
+            vn.vg.circle(@floatCast(f32, p.x), @floatCast(f32, p.y), 2.0);
+            vn.vg.fillColor(nanovg.nvgRGBA(180, 180, 10, 255));
+            vn.vg.fill();
+        }
     }
 };
 
@@ -204,8 +312,19 @@ pub fn main() anyerror!void {
     var vg = try nanovg.Wrapper.init(.GL3, &.{ .anti_alias, .stencil_strokes, .debug });
     defer vg.delete();
 
-    var vn = VnCtx.init(allocator, vg, WIDTH, HEIGHT);
+    const fitting_params = .{
+        .corner_thresh = std.math.pi * 0.6,
+        .tangent_range = 20.0,
+        .epsilon = 4.0,
+        .psi = 80.0,
+        .max_iter = 8,
+    };
+    var vn = VnCtx.init(allocator, vg, WIDTH, HEIGHT, fitting_params);
     window.setUserPointer(VnCtx, &vn);
+
+
+    //const tmp = .{ vec.Vec2(f64){ .x = 5.47e+02, .y = 4.3e+01 }, vec.Vec2(f64){ .x = 5.901831944593564e+02, .y = 3.220420138516091e+01 }, vec.Vec2(f64){ .x = 6.861557431761772e+02, .y = -1.5754054590581816e+01 }, vec.Vec2(f64){ .x = 6.96e+02, .y = 6.3e+01 }, vec.Vec2(f64){ .x = 5.746002772560366e+02, .y = 3.609993068599084e+01 }, vec.Vec2(f64){ .x = 5.976099943445125e+02, .y = 2.083687535346797e+01 }, vec.Vec2(f64){ .x = 6.27e+02, .y = 1.9e+01 }, vec.Vec2(f64){ .x = 6.779318427504348e+02, .y = 1.5816759828097823e+01 }, vec.Vec2(f64){ .x = 7.296708585359399e+02, .y = 5.899748487843604e+01 }, vec.Vec2(f64){ .x = 6.68e+02, .y = 9.6e+01 }, vec.Vec2(f64){ .x = 6.496642955510272e+02, .y = 1.070014226693837e+02 }, vec.Vec2(f64){ .x = 6.241205328118659e+02, .y = 1.0048493339851676e+02 }, vec.Vec2(f64){ .x = 6.04e+02, .y = 1.03e+02 } };
+    //try vn.points.appendSlice(&tmp);
 
     std.log.scoped(.VectorNotes).info("Starting render loop", .{});
 
@@ -215,27 +334,30 @@ pub fn main() anyerror!void {
         // Draw UI
         // Draw canvas
 
-        if (vn.points.items.len > 1) {
         vg.beginFrame(@intToFloat(f32, vn.view.width), @intToFloat(f32, vn.view.height), 1.0);
         vg.save();
         {
             vg.lineCap(.round);
             vg.lineJoin(.miter);
             vg.strokeWidth(2.0);
-            vg.strokeColor(nanovg.nvgRGBA(82, 144, 242, 255));
 
-            vg.beginPath();
-            const p = vn.view.canvasToView(vn.points.items[0]);
-            vg.moveTo(@floatCast(f32, p.x), @floatCast(f32, p.y));
-            for (vn.points.items[1..]) |point| {
-                const p_screen = vn.view.canvasToView(point);
-                vg.lineTo(@floatCast(f32, p_screen.x), @floatCast(f32, p_screen.y));
+            if (vn.points.items.len > 1) {
+                vg.strokeColor(nanovg.nvgRGBA(82, 144, 242, 255));
+                vn.drawLines(vn.points.items);
             }
-            vg.stroke();
+
+            for (vn.paths.items) |path| {
+                vg.strokeColor(nanovg.nvgRGBA(255, 0, 0, 255));
+                vg.strokeWidth(2.0);
+                vn.drawBezier(path.items);
+
+                if (vn.debug) {
+                    vn.drawCtrl(path.items);
+                }
+            }
         }
         vg.restore();
         vg.endFrame();
-        }
 
         // Do logic stuff (perform 'tool' operations)
 

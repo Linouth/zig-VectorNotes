@@ -63,10 +63,6 @@ pub fn Vec2(comptime T: type) type {
                 .y = v.y / l,
             };
         }
-
-        pub fn tangent(v0: Self, v1: Self) Self {
-            return v1.sub(v0).norm();
-        }
     };
 }
 
