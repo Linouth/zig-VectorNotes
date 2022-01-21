@@ -4,7 +4,10 @@ const gl = @import("zgl");
 
 const nanovg = @import("nanovg.zig");
 const vec = @import("vec.zig");
+const Path = @import("Path.zig");
 const BezierFit = @import("bezier_fit.zig");
+
+const log = std.log.scoped(.VectorNotes);
 
 pub const Vec2 = vec.Vec2(f64);
 
@@ -31,9 +34,12 @@ fn keyCallback(
                 vn.view.scale = 1.0;
             },
 
-            .p => std.debug.print("{any}\n", .{vn.paths.items[vn.paths.items.len-1].items}),
+            .p => std.debug.print("{any}\n", .{vn.paths.items[vn.paths.items.len-1].items()}),
 
             .d => vn.debug = !vn.debug,
+            .b => vn.draw_bounds = !vn.draw_bounds,
+
+            .s => vn.stroke_scaling = !vn.stroke_scaling,
 
             else => {},
         },
@@ -52,13 +58,13 @@ fn cursorPosCallback(window: glfw.Window, xpos: f64, ypos: f64) void {
 
     const MouseButton = glfw.mouse_button.MouseButton;
     if (vn.mouse.states[@enumToInt(MouseButton.left)] == .press) {
-        const points = vn.points.items;
+        const points = vn.points.items();
         const min_dist = 2.0;
 
         const mouse_canvas = vn.view.viewToCanvas(vn.mouse.pos);
         if (mouse_canvas.distSqr(points[points.len-1]) >=
             (min_dist*min_dist / (vn.view.scale*vn.view.scale))) {
-            vn.points.append(mouse_canvas) catch unreachable;
+            vn.points.add(mouse_canvas);
         }
     } else if (vn.mouse.states[@enumToInt(MouseButton.middle)] == .press) {
         const start_canvas = vn.view.viewToCanvas(vn.mouse.pos_pan_start);
@@ -88,26 +94,32 @@ fn mouseButtonCallback(
     switch (button) {
         .left => switch (action) {
             .press => {
-                vn.points.clearRetainingCapacity();
+                vn.points.clear();
 
-                vn.points.append(vn.view.viewToCanvas(vn.mouse.pos))
-                    catch unreachable;
+                vn.points.add(vn.view.viewToCanvas(vn.mouse.pos));
             },
 
             .release => {
-                const p_prev = vn.points.items[vn.points.items.len-1];
+                const p_prev = vn.points.last();
                 const p = vn.view.viewToCanvas(vn.mouse.pos);
                 if (p_prev.x != p.x and p_prev.y != p.y) {
-                    vn.points.append(p)
-                        catch unreachable;
+                    vn.points.add(p);
                 }
 
-                if (vn.points.items.len > 1) {
-                    const fitted = vn.bezier_fit.fit(vn.points.items, vn.view.scale);
-                    vn.paths.append(fitted) catch unreachable;
+                if (vn.points.len() > 1) {
+                    const fitted = vn.bezier_fit.fit(vn.points.items(), vn.view.scale);
+                    var path = Path.fromArray(fitted);
+
+                    if (vn.stroke_scaling) {
+                        path.setWidth(.{ .scaling = 2.0 / @floatCast(f32, vn.view.scale) });
+                    } else {
+                        path.setWidth(.{ .fixed = 2.0 });
+                    }
+
+                    vn.paths.append(path) catch unreachable;
                 }
 
-                //vn.points.clearRetainingCapacity();
+                //vn.points.clear();
             },
 
             else => {},
@@ -152,8 +164,6 @@ fn framebufferSizeCallback(window: glfw.Window, width: u32, height: u32) void {
     vn.view.height = height;
 }
 
-const Path = std.ArrayList(Vec2);
-
 const VnCtx = struct {
     allocator: std.mem.Allocator,
 
@@ -188,6 +198,8 @@ const VnCtx = struct {
     bezier_fit: BezierFit,
 
     debug: bool = false,
+    draw_bounds: bool = false,
+    stroke_scaling: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, vg: nanovg.Wrapper, width: u32, height: u32, fitting_params: BezierFit.Config) VnCtx {
         return VnCtx {
@@ -254,6 +266,15 @@ const VnCtx = struct {
         vn.vg.stroke();
     }
 
+    fn drawPath(vn: VnCtx, path: Path) void {
+        switch (path.width) {
+            .fixed => |width| vn.vg.strokeWidth(width),
+            .scaling => |width| vn.vg.strokeWidth(@maximum(width * @floatCast(f32, vn.view.scale), 0.4)),
+        }
+
+        vn.drawBezier(path.items());
+    }
+
     fn drawCtrl(vn: VnCtx, data: []const Vec2) void {
         {
             var i: usize = 0;
@@ -263,7 +284,7 @@ const VnCtx = struct {
                 const p2 = vn.view.canvasToView(data[i+2]);
                 const p3 = vn.view.canvasToView(data[i+3]);
 
-                vn.vg.strokeColor(nanovg.nvgRGBA(30, 255, 255, 255));
+                vn.vg.strokeColor(nanovg.nvgRGBA(30, 255, 255, 200));
                 vn.vg.strokeWidth(1.0);
 
                 vn.vg.beginPath();
@@ -278,12 +299,40 @@ const VnCtx = struct {
             }
         }
 
+        vn.vg.beginPath();
         for (data) |p_canvas| {
             const p = vn.view.canvasToView(p_canvas);
-            vn.vg.beginPath();
+            vn.vg.circle(@floatCast(f32, p.x), @floatCast(f32, p.y), 3.0);
+        }
+        vn.vg.fillColor(nanovg.nvgRGBA(30, 255, 255, 255));
+        vn.vg.fill();
+
+        vn.vg.beginPath();
+        for (data) |p_canvas| {
+            const p = vn.view.canvasToView(p_canvas);
             vn.vg.circle(@floatCast(f32, p.x), @floatCast(f32, p.y), 2.0);
-            vn.vg.fillColor(nanovg.nvgRGBA(180, 180, 10, 255));
-            vn.vg.fill();
+        }
+        vn.vg.fillColor(nanovg.nvgRGBA(180, 180, 10, 255));
+        vn.vg.fill();
+    }
+
+    fn drawBounds(vn: VnCtx, bounds: ?[2]Vec2) void {
+        if (bounds) |b| {
+            const b_lower = vn.view.canvasToView(b[0]);
+            const b_upper = vn.view.canvasToView(b[1]);
+
+            vn.vg.beginPath();
+            vn.vg.rect(
+                @floatCast(f32, b_lower.x),
+                @floatCast(f32, b_lower.y),
+                @floatCast(f32, b_upper.x - b_lower.x),
+                @floatCast(f32, b_upper.y - b_lower.y));
+
+            vn.vg.strokeColor(nanovg.nvgRGBA(30, 255, 255, 100));
+            vn.vg.strokeWidth(2.0);
+            vn.vg.stroke();
+        } else {
+            log.warn("Bounds was not initialized????", .{});
         }
     }
 };
@@ -341,18 +390,22 @@ pub fn main() anyerror!void {
             vg.lineJoin(.miter);
             vg.strokeWidth(2.0);
 
-            if (vn.points.items.len > 1) {
+            if (vn.points.len() > 1) {
                 vg.strokeColor(nanovg.nvgRGBA(82, 144, 242, 255));
-                vn.drawLines(vn.points.items);
+                vn.drawLines(vn.points.items());
             }
 
             for (vn.paths.items) |path| {
                 vg.strokeColor(nanovg.nvgRGBA(255, 0, 0, 255));
                 vg.strokeWidth(2.0);
-                vn.drawBezier(path.items);
+                vn.drawPath(path);
 
                 if (vn.debug) {
-                    vn.drawCtrl(path.items);
+                    vn.drawCtrl(path.items());
+                }
+
+                if (vn.draw_bounds) {
+                    vn.drawBounds(path.bounds);
                 }
             }
         }

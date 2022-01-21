@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const Vec2 = @import("root").Vec2;
-const Path = std.ArrayList(Vec2);
+const Points = std.ArrayList(Vec2);
 
 const log = std.log.scoped(.BezierFit);
 
@@ -13,7 +13,7 @@ config: Config,
 const FitCtx = struct {
     allocator: std.mem.Allocator,
 
-    output: Path,
+    output: Points,
     points: []const Vec2,
     params: []f64,
     coeffs: [][4]f64,
@@ -23,7 +23,7 @@ const FitCtx = struct {
     fn init(allocator: std.mem.Allocator, points: []const Vec2, config: Config) !FitCtx {
         return FitCtx{
             .allocator = allocator,
-            .output = Path.init(allocator),
+            .output = Points.init(allocator),
             .points = points,
             .params = try allocator.alloc(f64, points.len),
             .coeffs = try allocator.alloc([4]f64, points.len),
@@ -269,7 +269,6 @@ pub const Config = struct {
     max_iter: usize,
 };
 
-// TODO: Refactor this file.
 pub fn init(allocator: std.mem.Allocator, config: Config) BezierFit {
     return .{
         .allocator = allocator,
@@ -277,7 +276,7 @@ pub fn init(allocator: std.mem.Allocator, config: Config) BezierFit {
     };
 }
 
-pub fn fit(self: BezierFit, points: []const Vec2, scale: f64) Path {
+pub fn fit(self: BezierFit, points: []const Vec2, scale: f64) Points {
     // Apply view scale to fitting parameters
     var config = self.config;
     config.tangent_range /= scale;
