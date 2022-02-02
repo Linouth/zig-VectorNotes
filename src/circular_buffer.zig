@@ -24,7 +24,7 @@ pub fn CircularBuf(comptime T: type, size: usize) type {
         end: usize = 0,
         first: bool = true,
 
-        items: [size]T = .{undefined} ** size,
+        items: [size]?T = .{null} ** size,
 
         pub fn init() Self {
             return .{};
@@ -38,19 +38,22 @@ pub fn CircularBuf(comptime T: type, size: usize) type {
 
             var buf = Self {};
             for (items) |item| {
-                buf.push(item);
+                _ = buf.push(item);
             }
 
             return buf;
         }
 
-        pub fn push(self: *Self, item: T) void {
+        /// Push a new item into the back of the buffer. If the buffer is full,
+        /// the first item will be replaced. If a value is overwritten, it will
+        /// be returned, otherwise `null` is returned.
+        pub fn push(self: *Self, item: T) ?T {
             if (self.first) {
                 // First item
                 self.first = false;
 
                 self.items[self.end] = item;
-                return;
+                return null;
             }
 
             self.end = add(self.end, 1, size);
@@ -60,13 +63,22 @@ pub fn CircularBuf(comptime T: type, size: usize) type {
                 self.start = add(self.start, 1, size);
             }
 
+            // Check if we are overwriting a previous value
+            var ret: ?T = null;
+            if (self.items[self.end]) |val| {
+                ret = val;
+            }
+
             self.items[self.end] = item;
+            return ret;
         }
 
-        pub fn pushFront(self: *Self, item: T) void {
+        /// Push a new item into the front of the buffer. If the buffer is full,
+        /// the last item will be replaced. If a value is overwritten, it will
+        /// be returned, otherwise `null` is returned.
+        pub fn pushFront(self: *Self, item: T) ?T {
             if (self.first) {
-                self.push(item);
-                return;
+                return self.push(item);
             }
 
             self.start = add(self.start, -1, size);
@@ -76,7 +88,15 @@ pub fn CircularBuf(comptime T: type, size: usize) type {
                 self.end = add(self.end, -1, size);
             }
 
+            // Check if we are overwriting a previous value
+            var ret: ?T = null;
+            if (self.items[self.start]) |val| {
+                ret = val;
+            }
+
             self.items[self.start] = item;
+
+            return ret;
         }
 
         pub fn pop(self: *Self) ?T {
@@ -91,7 +111,7 @@ pub fn CircularBuf(comptime T: type, size: usize) type {
                 self.end = add(self.end, -1, size);
             }
 
-            return ret;
+            return ret.?;
         }
 
         pub fn popFront(self: *Self) ?T {
@@ -106,27 +126,41 @@ pub fn CircularBuf(comptime T: type, size: usize) type {
                 self.start = add(self.start, 1, size);
             }
 
-            return ret;
+            return ret.?;
         }
 
-        pub fn get(self: Self, abs_index: usize) ?T {
-            const abs_end = add(self.end, -@intCast(isize, self.start), size);
-            if (abs_index > abs_end) {
+        /// Get the value at `rel_index` relative to `self.start`. This means
+        /// that index 0 == `self.start` etc.
+        pub fn get(self: Self, rel_index: usize) ?T {
+            const rel_end = add(self.end, -@intCast(isize, self.start), size);
+            if (rel_index > rel_end) {
                 // Unused index. Either not yet set or out of bounds.
                 return null;
             }
 
-            const index = add(self.start, @intCast(isize, abs_index), size);
-            return self.items[index];
+            const index = add(self.start, @intCast(isize, rel_index), size);
+            return self.items[index].?;
+        }
+
+        pub fn len(self: Self) usize {
+            return add(self.end, -@intCast(isize, self.start), size) + 1;
+        }
+
+        pub fn setRelStart(self: *Self, rel_index: isize) void {
+            self.start = add(self.start, rel_index, size);
+        }
+
+        pub fn setRelEnd(self: *Self, rel_index: isize) void {
+            self.end = add(self.end, rel_index, size);
         }
 
         pub const CircularBufIterator = struct {
             buf: Self,
-            abs_index: usize = 0,
+            rel_index: usize = 0,
 
             pub fn next(self: *@This()) ?T {
-                const ret = self.buf.get(self.abs_index);
-                self.abs_index += 1;
+                const ret = self.buf.get(self.rel_index);
+                self.rel_index += 1;
                 return ret;
             }
         };
@@ -142,14 +176,14 @@ pub fn CircularBuf(comptime T: type, size: usize) type {
 test "Circular buffer iterator" {
     var buf = CircularBuf(u8, 10).init();
 
-    buf.push(0);
-    buf.push(1);
-    buf.push(2);
-    buf.push(3);
-    buf.push(4);
-    buf.push(5);
-    buf.push(6);
-    buf.push(7);
+    _ = buf.push(0);
+    _ = buf.push(1);
+    _ = buf.push(2);
+    _ = buf.push(3);
+    _ = buf.push(4);
+    _ = buf.push(5);
+    _ = buf.push(6);
+    _ = buf.push(7);
 
     var iter = buf.iter();
     var count: usize = 0;
@@ -167,19 +201,19 @@ test "Circular buffer iterator" {
 test "Circular overflow then iterator" {
     var buf = CircularBuf(u8, 10).init();
 
-    buf.push(0);
-    buf.push(1);
-    buf.push(2);
-    buf.push(3);
-    buf.push(4);
-    buf.push(5);
-    buf.push(6);
-    buf.push(7);
-    buf.push(8);
-    buf.push(9);
-    buf.push(10);
-    try testing.expect(buf.items[0] == 10);
-    try testing.expect(buf.items[1] == 1);
+    _ = buf.push(0);
+    _ = buf.push(1);
+    _ = buf.push(2);
+    _ = buf.push(3);
+    _ = buf.push(4);
+    _ = buf.push(5);
+    _ = buf.push(6);
+    _ = buf.push(7);
+    _ = buf.push(8);
+    _ = buf.push(9);
+    _ = buf.push(10);
+    try testing.expect(buf.items[0].? == 10);
+    try testing.expect(buf.items[1].? == 1);
 
     try testing.expect(buf.start == 1);
     try testing.expect(buf.end == 0);
@@ -194,10 +228,10 @@ test "Circular overflow then iterator" {
     try testing.expect(count == 10);
     try testing.expect(sum == 55);
 
-    buf.pushFront(11);
-    try testing.expect(buf.items[0] == 11);
-    try testing.expect(buf.items[1] == 1);
-    try testing.expect(buf.items[9] == 9);
+    _ = buf.pushFront(11);
+    try testing.expect(buf.items[0].? == 11);
+    try testing.expect(buf.items[1].? == 1);
+    try testing.expect(buf.items[9].? == 9);
 
     iter = buf.iter();
     sum = 0;
@@ -210,9 +244,9 @@ test "Circular overflow then iterator" {
 test "Circular slice init" {
     var buf = CircularBuf(u8, 4).initFromSlice(&.{0, 1, 2, 3, 4});
 
-    try testing.expect(buf.items[0] == 4);
-    try testing.expect(buf.items[1] == 1);
-    try testing.expect(buf.items[2] == 2);
+    try testing.expect(buf.items[0].? == 4);
+    try testing.expect(buf.items[1].? == 1);
+    try testing.expect(buf.items[2].? == 2);
 
     try testing.expect(buf.get(2).? == 3);
 }
