@@ -1,7 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 
-const log = std.log.scoped(.CircularBuf);
+const log = std.log.scoped(.RingBuffer);
 
 /// Modular addition. Circle around back to 0 once `size` is reached. Can
 /// subtract if `b` is negative.
@@ -13,9 +13,9 @@ inline fn add(a: usize, b: isize, size: usize) usize {
     return @intCast(usize, ret);
 }
 
-pub fn CircularBuf(comptime T: type, size: usize) type {
+pub fn RingBuffer(comptime T: type, size: usize) type {
     if (size < 2)
-        @compileError("CircularBuf has to have at least a size of 2.");
+        @compileError("RingBuffer has to have at least a size of 2.");
 
     return struct {
         const Self = @This();
@@ -33,7 +33,7 @@ pub fn CircularBuf(comptime T: type, size: usize) type {
         pub fn initFromSlice(items: []const T) Self {
             if (items.len > size)
                 log.warn(
-                    "CircularBuf is being initialized from a slice with more elements ({}) than the size of the buffer allows ({}). The first entries will be overwritten.",
+                    "RingBuffer is being initialized from a slice with more elements ({}) than the size of the buffer allows ({}). The first entries will be overwritten.",
                     .{items.len, size});
 
             var buf = Self {};
@@ -154,7 +154,7 @@ pub fn CircularBuf(comptime T: type, size: usize) type {
             self.end = add(self.end, rel_index, size);
         }
 
-        pub const CircularBufIterator = struct {
+        pub const RingBufferIterator = struct {
             buf: Self,
             rel_index: usize = 0,
 
@@ -165,7 +165,7 @@ pub fn CircularBuf(comptime T: type, size: usize) type {
             }
         };
 
-        pub fn iter(self: Self) CircularBufIterator {
+        pub fn iter(self: Self) RingBufferIterator {
             return .{
                 .buf = self,
             };
@@ -173,17 +173,8 @@ pub fn CircularBuf(comptime T: type, size: usize) type {
     };
 }
 
-test "Circular buffer iterator" {
-    var buf = CircularBuf(u8, 10).init();
-
-    _ = buf.push(0);
-    _ = buf.push(1);
-    _ = buf.push(2);
-    _ = buf.push(3);
-    _ = buf.push(4);
-    _ = buf.push(5);
-    _ = buf.push(6);
-    _ = buf.push(7);
+test "RingBuffer iterator" {
+    var buf = RingBuffer(u8, 10).initFromSlice(&.{0, 1, 2, 3, 4, 5, 6, 7});
 
     var iter = buf.iter();
     var count: usize = 0;
@@ -198,20 +189,12 @@ test "Circular buffer iterator" {
     try testing.expect(sum == 28);
 }
 
-test "Circular overflow then iterator" {
-    var buf = CircularBuf(u8, 10).init();
+test "RingBuffer overflow then iterator" {
+    var buf = RingBuffer(u8, 10).initFromSlice(&.{0, 1, 2, 3, 4, 5, 6, 7, 8});
 
-    _ = buf.push(0);
-    _ = buf.push(1);
-    _ = buf.push(2);
-    _ = buf.push(3);
-    _ = buf.push(4);
-    _ = buf.push(5);
-    _ = buf.push(6);
-    _ = buf.push(7);
-    _ = buf.push(8);
     _ = buf.push(9);
     _ = buf.push(10);
+
     try testing.expect(buf.items[0].? == 10);
     try testing.expect(buf.items[1].? == 1);
 
@@ -241,8 +224,8 @@ test "Circular overflow then iterator" {
     try testing.expect(sum == 56);
 }
 
-test "Circular slice init" {
-    var buf = CircularBuf(u8, 4).initFromSlice(&.{0, 1, 2, 3, 4});
+test "RingBuffer slice init" {
+    var buf = RingBuffer(u8, 4).initFromSlice(&.{0, 1, 2, 3, 4});
 
     try testing.expect(buf.items[0].? == 4);
     try testing.expect(buf.items[1].? == 1);
@@ -251,12 +234,20 @@ test "Circular slice init" {
     try testing.expect(buf.get(2).? == 3);
 }
 
-test "Circular pops" {
-    var buf = CircularBuf(u8, 4).initFromSlice(&.{0, 1, 2, 3});
+test "RingBuffer pops" {
+    var buf = RingBuffer(u8, 4).initFromSlice(&.{0, 1, 2, 3});
 
     try testing.expect(buf.pop().? == 3);
     try testing.expect(buf.popFront().? == 0);
 
     try testing.expect(buf.start == 1);
     try testing.expect(buf.end == 2);
+}
+
+test "RingBuffer Minimal size" {
+    var buf = RingBuffer(u8, 2).initFromSlice(&.{0, 1});
+
+    try testing.expect(buf.push(2).? == 0);
+    try testing.expect(buf.items[0].? == 2);
+    try testing.expect(buf.items[1].? == 1);
 }

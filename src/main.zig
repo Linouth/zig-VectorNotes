@@ -6,7 +6,7 @@ const nanovg = @import("nanovg.zig");
 const vec = @import("vec.zig");
 const Path = @import("Path.zig");
 const BezierFit = @import("bezier_fit.zig");
-const CircularBuf = @import("circular_buffer.zig").CircularBuf;
+const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 
 const log = std.log.scoped(.VectorNotes);
 
@@ -54,6 +54,8 @@ fn keyCallback(
             } else if (mods.control) {
                 vn.undo();
             },
+
+            .c => vn.cursor_mode = !vn.cursor_mode,
 
             else => {},
         },
@@ -110,30 +112,37 @@ fn mouseButtonCallback(
             .press => {
                 vn.points.clearRetainingCapacity();
 
-                vn.points.append(vn.view.viewToCanvas(vn.mouse.pos)) catch unreachable;
+                if (vn.cursor_mode) {
+                    vn.selectPath(vn.view.viewToCanvas(vn.mouse.pos));
+                } else {
+                    vn.points.append(vn.view.viewToCanvas(vn.mouse.pos)) catch unreachable;
+                }
             },
 
             .release => {
-                const p_prev = vn.points.items[vn.points.items.len-1];
-                const p = vn.view.viewToCanvas(vn.mouse.pos);
-                if (p_prev.x != p.x and p_prev.y != p.y) {
-                    vn.points.append(p) catch unreachable;
-                }
 
-                if (vn.points.items.len > 1) {
-                    var fitted = vn.bezier_fit.fit(vn.points.items, vn.view.scale);
-                    var path = Path.fromArray(&fitted);
-
-                    if (vn.stroke_scaling) {
-                        path.setWidth(.{ .scaling = 2.0 / @floatCast(f32, vn.view.scale) });
-                    } else {
-                        path.setWidth(.{ .fixed = 2.0 });
+                if (!vn.cursor_mode) {
+                    const p_prev = vn.points.items[vn.points.items.len-1];
+                    const p = vn.view.viewToCanvas(vn.mouse.pos);
+                    if (p_prev.x != p.x and p_prev.y != p.y) {
+                        vn.points.append(p) catch unreachable;
                     }
 
-                    vn.addPath(path);
-                }
+                    if (vn.points.items.len > 1) {
+                        var fitted = vn.bezier_fit.fit(vn.points.items, vn.view.scale);
+                        var path = Path.fromArray(&fitted);
 
-                //vn.points.clear();
+                        if (vn.stroke_scaling) {
+                            path.setWidth(.{ .scaling = 2.0 / @floatCast(f32, vn.view.scale) });
+                        } else {
+                            path.setWidth(.{ .fixed = 2.0 });
+                        }
+
+                        vn.addPath(path);
+                    }
+
+                    //vn.points.clear();
+                }
             },
 
             else => {},
@@ -155,7 +164,7 @@ fn scrollCallback(window: glfw.Window, xoffset: f64, yoffset: f64) void {
 
     var vn = window.getUserPointer(*VnCtx) orelse unreachable;
 
-    std.log.info("Scroll: {}", .{yoffset});
+    log.info("Scroll: {}", .{yoffset});
     if (yoffset != 0.0) {
         const mouse_before = vn.view.viewToCanvas(vn.mouse.pos);
 
@@ -177,18 +186,6 @@ fn framebufferSizeCallback(window: glfw.Window, width: u32, height: u32) void {
     vn.view.width = width;
     vn.view.height = height;
 }
-
-//const ActionState = struct {
-//    index: usize,
-//    action: Action,
-//
-//    const Action = union(enum) {
-//        created: void,
-//        deleted: void,
-//        translated: void,
-//        //transform: {},
-//    };
-//};
 
 // TODO: Redo this temporary helper function
 fn dupePathsArray(allocator: std.mem.Allocator, paths: std.ArrayList(Path)) std.ArrayList(Path) {
@@ -238,7 +235,7 @@ const VnCtx = struct {
     points: std.ArrayList(Vec2),
     paths: std.ArrayList(Path),
     history: struct {
-        buf: CircularBuf(std.ArrayList(Path), 4),
+        buf: RingBuffer(std.ArrayList(Path), 25),
         index: usize = 0,
         outdated: bool = true,
     },
@@ -248,6 +245,7 @@ const VnCtx = struct {
     debug: bool = false,
     draw_bounds: bool = false,
     stroke_scaling: bool = false,
+    cursor_mode: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, vg: nanovg.Wrapper, width: u32, height: u32, fitter: BezierFit) VnCtx {
         return VnCtx {
@@ -267,7 +265,7 @@ const VnCtx = struct {
 
             .points = std.ArrayList(Vec2).init(allocator),
             .paths = std.ArrayList(Path).init(allocator),
-            .history = .{ .buf = CircularBuf(std.ArrayList(Path), 4).init() },
+            .history = .{ .buf = RingBuffer(std.ArrayList(Path), 25).init() },
 
             .bezier_fit = fitter,
         };
@@ -283,6 +281,45 @@ const VnCtx = struct {
     }
 
     pub fn addPath(self: *VnCtx, new_path: Path) void {
+        self.saveHistory();
+
+        // Add the new path to the pathlist
+        self.paths.append(new_path) catch unreachable;
+
+        // Flag to note that the current state is not yet in the history buffer
+        self.history.outdated = true;
+    }
+
+    pub fn translatePath(self: *VnCtx, path_index: usize, translation: Vec2) void {
+        self.saveHistory();
+
+        self.paths.items[path_index] = self.paths.items[path_index].add(translation);
+
+        self.history.index = 0;
+    }
+
+    pub fn selectPath(self: *VnCtx, pos: Vec2) void {
+        const selection_range = 10;
+
+        for (self.paths.items) |*path| {
+            const bounds = path.bounds.?;
+
+            // Only check the paths whose bounds overlap with the mouse pos
+            if ((pos.x > bounds[0].x and pos.x < bounds[1].x) and
+                (pos.y > bounds[0].y and pos.y < bounds[1].y)) {
+
+                for (path.points) |point| {
+                    if (point.dist(pos) <= selection_range) {
+                        path.selected = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Saves the current state to the history list
+    fn saveHistory(self: *VnCtx) void {
         // Set the new startpoint of the history buffer to the current history
         // index. This is done so that you cannot redo something after adding a
         // new path.
@@ -290,7 +327,6 @@ const VnCtx = struct {
 
         // Only add the current state if we are not already using a previous
         // state.
-        //if (self.history.index == 0) {
         if (self.history.outdated) {
             // Make a copy of the current state
             var arr_new = dupePathsArray(self.allocator, self.paths);
@@ -303,20 +339,12 @@ const VnCtx = struct {
             }
         }
 
-        // Reset history index, and flag so that 'undo' can save the latest
-        // state again.
+        // Reset history index. Essentially invalidating 'newer' (not redone)
+        // entries.
         self.history.index = 0;
-        log.info("New history index: {}", .{self.history.index});
-
-        self.paths.append(new_path) catch unreachable;
-
-        // Flag to note that the current state is not yet in the history buffer
-        self.history.outdated = true;
     }
 
     pub fn undo(self: *VnCtx) void {
-        log.info("buflen: {}, index: {}", .{self.history.buf.len(), self.history.index});
-
         // Check if the current state is already in the history buffer. If it is
         // not, save the current state.
         if (self.history.outdated) {
@@ -337,8 +365,6 @@ const VnCtx = struct {
         if (self.history.buf.get(self.history.index)) |hist| {
             freePathsArray(self.paths);
             self.paths = dupePathsArray(self.allocator, hist);
-
-            log.info("New history index: {}", .{self.history.index});
         } else {
             log.err("Could not get the proper history index..? index = {}",
                 .{self.history.index});
@@ -346,7 +372,6 @@ const VnCtx = struct {
     }
 
     pub fn redo(self: *VnCtx) void {
-        log.info("buflen: {}, index: {}", .{self.history.buf.len(), self.history.index});
         // Make sure that we can redo something.
         if (self.history.index == 0)
             return;
@@ -356,8 +381,6 @@ const VnCtx = struct {
         if (self.history.buf.get(self.history.index)) |hist| {
             freePathsArray(self.paths);
             self.paths = dupePathsArray(self.allocator, hist);
-
-            log.info("New history index: {}", .{self.history.index});
         } else {
             log.err("Could not get the proper history index..? index = {}",
                 .{self.history.index});
@@ -482,6 +505,7 @@ pub fn main() anyerror!void {
     });
     defer window.destroy();
     try glfw.makeContextCurrent(window);
+    try glfw.swapInterval(0);
 
     window.setFramebufferSizeCallback(framebufferSizeCallback);
     window.setKeyCallback(keyCallback);
@@ -503,11 +527,7 @@ pub fn main() anyerror!void {
     var vn = VnCtx.init(allocator, vg, WIDTH, HEIGHT, fitter);
     window.setUserPointer(VnCtx, &vn);
 
-
-    //const tmp = .{ vec.Vec2(f64){ .x = 5.47e+02, .y = 4.3e+01 }, vec.Vec2(f64){ .x = 5.901831944593564e+02, .y = 3.220420138516091e+01 }, vec.Vec2(f64){ .x = 6.861557431761772e+02, .y = -1.5754054590581816e+01 }, vec.Vec2(f64){ .x = 6.96e+02, .y = 6.3e+01 }, vec.Vec2(f64){ .x = 5.746002772560366e+02, .y = 3.609993068599084e+01 }, vec.Vec2(f64){ .x = 5.976099943445125e+02, .y = 2.083687535346797e+01 }, vec.Vec2(f64){ .x = 6.27e+02, .y = 1.9e+01 }, vec.Vec2(f64){ .x = 6.779318427504348e+02, .y = 1.5816759828097823e+01 }, vec.Vec2(f64){ .x = 7.296708585359399e+02, .y = 5.899748487843604e+01 }, vec.Vec2(f64){ .x = 6.68e+02, .y = 9.6e+01 }, vec.Vec2(f64){ .x = 6.496642955510272e+02, .y = 1.070014226693837e+02 }, vec.Vec2(f64){ .x = 6.241205328118659e+02, .y = 1.0048493339851676e+02 }, vec.Vec2(f64){ .x = 6.04e+02, .y = 1.03e+02 } };
-    //try vn.points.appendSlice(&tmp);
-
-    std.log.scoped(.VectorNotes).info("Starting render loop", .{});
+    log.info("Starting render loop", .{});
 
     while (!window.shouldClose()) {
         gl.clear(.{ .color = true });
@@ -531,6 +551,10 @@ pub fn main() anyerror!void {
                 vg.strokeColor(nanovg.nvgRGBA(255, 0, 0, 255));
                 vg.strokeWidth(2.0);
                 vn.drawPath(path);
+
+                if (path.selected) {
+                    vn.drawCtrl(path.points);
+                }
 
                 if (vn.debug) {
                     vn.drawCtrl(path.points);

@@ -55,16 +55,6 @@ pub fn dupe(self: Path) Path {
     };
 }
 
-//pub fn add(self: *Path, point: Vec2) void {
-//    self.calcBounds(point);
-//
-//    self.points.append(point)
-//        catch |err| {
-//            log.err("Cannot add item to Path. Memory issues? Error: {}", .{err});
-//            std.os.exit(1);
-//        };
-//}
-
 pub fn last(self: Path) Vec2 {
     return self.points.items[self.points.items.len-1];
 }
@@ -90,3 +80,12 @@ fn calcBounds(self: *Path, point: Vec2) void {
         self.bounds = .{ point, point };
     }
 }
+
+//pub inline fn evaluateBezier(self: Path, u: f64) void {
+//    const omu = 1 - u;
+//
+//    const B0 = omu*omu*omu;
+//    const B1 = 3 * omu*omu * u;
+//    const B2 = 3 * omu * u*u;
+//    const B3 = u*u*u;
+//}
