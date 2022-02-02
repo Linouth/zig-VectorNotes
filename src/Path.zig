@@ -5,7 +5,10 @@ const Path = @This();
 
 const log = std.log.scoped(.Path);
 
-points: std.ArrayList(Vec2),
+allocator: std.mem.Allocator,
+
+//points: std.ArrayList(Vec2),
+points: []Vec2,
 bounds: ?[2]Vec2 = null,
 selected: bool = false,
 
@@ -18,16 +21,19 @@ const Width = union(enum) {
 
 pub fn init(allocator: std.mem.Allocator) Path {
     return .{
-        .points = std.ArrayList(Vec2).init(allocator),
+        .allocator = allocator,
+        //.points = std.ArrayList(Vec2).init(allocator),
+        .points = undefined,
     };
 }
 
-pub fn fromArray(array: std.ArrayList(Vec2)) Path {
+pub fn fromArray(array: *std.ArrayList(Vec2)) Path {
     var path = Path {
-        .points = array,
+        .allocator = array.allocator,
+        .points = array.toOwnedSlice(),
     };
 
-    for (path.items()) |point| {
+    for (path.points) |point| {
         path.calcBounds(point);
     }
 
@@ -35,30 +41,29 @@ pub fn fromArray(array: std.ArrayList(Vec2)) Path {
 }
 
 pub fn deinit(self: Path) void {
-    self.points.deinit();
+    self.allocator.free(self.points);
 }
 
-pub fn clear(self: *Path) void {
-    self.points.clearRetainingCapacity();
+pub fn dupe(self: Path) Path {
+    return .{
+        .allocator = self.allocator,
+        .points = self.allocator.dupe(Vec2, self.points) catch unreachable,
+        .bounds = self.bounds,
+
+        .selected = self.selected,
+        .width = self.width,
+    };
 }
 
-pub fn add(self: *Path, point: Vec2) void {
-    self.calcBounds(point);
-
-    self.points.append(point)
-        catch |err| {
-            log.err("Cannot add item to Path. Memory issues? Error: {}", .{err});
-            std.os.exit(1);
-        };
-}
-
-pub fn items(self: Path) []Vec2 {
-    return self.points.items;
-}
-
-pub fn len(self: Path) usize {
-    return self.points.items.len;
-}
+//pub fn add(self: *Path, point: Vec2) void {
+//    self.calcBounds(point);
+//
+//    self.points.append(point)
+//        catch |err| {
+//            log.err("Cannot add item to Path. Memory issues? Error: {}", .{err});
+//            std.os.exit(1);
+//        };
+//}
 
 pub fn last(self: Path) Vec2 {
     return self.points.items[self.points.items.len-1];

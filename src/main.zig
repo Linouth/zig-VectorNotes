@@ -6,6 +6,7 @@ const nanovg = @import("nanovg.zig");
 const vec = @import("vec.zig");
 const Path = @import("Path.zig");
 const BezierFit = @import("bezier_fit.zig");
+const CircularBuf = @import("circular_buffer.zig").CircularBuf;
 
 const log = std.log.scoped(.VectorNotes);
 
@@ -34,12 +35,25 @@ fn keyCallback(
                 vn.view.scale = 1.0;
             },
 
-            .p => std.debug.print("{any}\n", .{vn.paths.items[vn.paths.items.len-1].items()}),
+            .p => std.debug.print("{any}\n", .{vn.paths.items[vn.paths.items.len-1].points}),
 
             .d => vn.debug = !vn.debug,
             .b => vn.draw_bounds = !vn.draw_bounds,
 
-            .s => vn.stroke_scaling = !vn.stroke_scaling,
+            .s => {
+                if (vn.stroke_scaling) {
+                    log.info("Changing stroke mode to fixed", .{});
+                } else {
+                    log.info("Changing stroke mode to scaling", .{});
+                }
+                vn.stroke_scaling = !vn.stroke_scaling;
+            },
+
+            .z => if (mods.control and mods.shift) {
+                vn.redo();
+            } else if (mods.control) {
+                vn.undo();
+            },
 
             else => {},
         },
@@ -58,13 +72,13 @@ fn cursorPosCallback(window: glfw.Window, xpos: f64, ypos: f64) void {
 
     const MouseButton = glfw.mouse_button.MouseButton;
     if (vn.mouse.states[@enumToInt(MouseButton.left)] == .press) {
-        const points = vn.points.items();
+        const points = vn.points.items;
         const min_dist = 2.0;
 
         const mouse_canvas = vn.view.viewToCanvas(vn.mouse.pos);
         if (mouse_canvas.distSqr(points[points.len-1]) >=
             (min_dist*min_dist / (vn.view.scale*vn.view.scale))) {
-            vn.points.add(mouse_canvas);
+            vn.points.append(mouse_canvas) catch unreachable;
         }
     } else if (vn.mouse.states[@enumToInt(MouseButton.middle)] == .press) {
         const start_canvas = vn.view.viewToCanvas(vn.mouse.pos_pan_start);
@@ -94,21 +108,21 @@ fn mouseButtonCallback(
     switch (button) {
         .left => switch (action) {
             .press => {
-                vn.points.clear();
+                vn.points.clearRetainingCapacity();
 
-                vn.points.add(vn.view.viewToCanvas(vn.mouse.pos));
+                vn.points.append(vn.view.viewToCanvas(vn.mouse.pos)) catch unreachable;
             },
 
             .release => {
-                const p_prev = vn.points.last();
+                const p_prev = vn.points.items[vn.points.items.len-1];
                 const p = vn.view.viewToCanvas(vn.mouse.pos);
                 if (p_prev.x != p.x and p_prev.y != p.y) {
-                    vn.points.add(p);
+                    vn.points.append(p) catch unreachable;
                 }
 
-                if (vn.points.len() > 1) {
-                    const fitted = vn.bezier_fit.fit(vn.points.items(), vn.view.scale);
-                    var path = Path.fromArray(fitted);
+                if (vn.points.items.len > 1) {
+                    var fitted = vn.bezier_fit.fit(vn.points.items, vn.view.scale);
+                    var path = Path.fromArray(&fitted);
 
                     if (vn.stroke_scaling) {
                         path.setWidth(.{ .scaling = 2.0 / @floatCast(f32, vn.view.scale) });
@@ -116,7 +130,7 @@ fn mouseButtonCallback(
                         path.setWidth(.{ .fixed = 2.0 });
                     }
 
-                    vn.paths.append(path) catch unreachable;
+                    vn.addPath(path);
                 }
 
                 //vn.points.clear();
@@ -164,6 +178,35 @@ fn framebufferSizeCallback(window: glfw.Window, width: u32, height: u32) void {
     vn.view.height = height;
 }
 
+//const ActionState = struct {
+//    index: usize,
+//    action: Action,
+//
+//    const Action = union(enum) {
+//        created: void,
+//        deleted: void,
+//        translated: void,
+//        //transform: {},
+//    };
+//};
+
+// TODO: Redo this temporary helper function
+fn dupePathsArray(allocator: std.mem.Allocator, paths: std.ArrayList(Path)) std.ArrayList(Path) {
+    var slice = allocator.alloc(Path, paths.items.len) catch unreachable;
+    for (paths.items) |path, i| {
+        slice[i] = path.dupe();
+    }
+    return std.ArrayList(Path).fromOwnedSlice(allocator, slice);
+}
+
+// TODO: Redo this temporary helper function
+fn freePathsArray(paths: std.ArrayList(Path)) void {
+    for (paths.items) |path| {
+        path.deinit();
+    }
+    paths.deinit();
+}
+
 const VnCtx = struct {
     allocator: std.mem.Allocator,
 
@@ -192,8 +235,13 @@ const VnCtx = struct {
         states: [NUM_MOUSE_STATES]glfw.Action,
     },
 
-    points: Path,
+    points: std.ArrayList(Vec2),
     paths: std.ArrayList(Path),
+    history: struct {
+        buf: CircularBuf(std.ArrayList(Path), 4),
+        index: usize = 0,
+        outdated: bool = true,
+    },
 
     bezier_fit: BezierFit,
 
@@ -201,7 +249,7 @@ const VnCtx = struct {
     draw_bounds: bool = false,
     stroke_scaling: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, vg: nanovg.Wrapper, width: u32, height: u32, fitting_params: BezierFit.Config) VnCtx {
+    pub fn init(allocator: std.mem.Allocator, vg: nanovg.Wrapper, width: u32, height: u32, fitter: BezierFit) VnCtx {
         return VnCtx {
             .allocator = allocator,
             .vg = vg,
@@ -217,20 +265,103 @@ const VnCtx = struct {
                 .states = undefined,
             },
 
-            .points = Path.init(allocator),
+            .points = std.ArrayList(Vec2).init(allocator),
             .paths = std.ArrayList(Path).init(allocator),
+            .history = .{ .buf = CircularBuf(std.ArrayList(Path), 4).init() },
 
-            .bezier_fit = BezierFit.init(allocator, fitting_params),
+            .bezier_fit = fitter,
         };
     }
 
     pub fn deinit(self: VnCtx) void {
         self.points.deinit();
 
-        for (self.paths) |path| {
+        for (self.paths.items) |path| {
             path.deinit();
         }
         self.paths.deinit();
+    }
+
+    pub fn addPath(self: *VnCtx, new_path: Path) void {
+        // Set the new startpoint of the history buffer to the current history
+        // index. This is done so that you cannot redo something after adding a
+        // new path.
+        self.history.buf.setRelStart(@intCast(isize, self.history.index));
+
+        // Only add the current state if we are not already using a previous
+        // state.
+        //if (self.history.index == 0) {
+        if (self.history.outdated) {
+            // Make a copy of the current state
+            var arr_new = dupePathsArray(self.allocator, self.paths);
+
+            // Add the current state to the history buffer. If the buffer is full,
+            // replace the first item. If a previous entry is overwritten, free the
+            // corresponding memory.
+            if (self.history.buf.pushFront(arr_new)) |prev_state| {
+                freePathsArray(prev_state);
+            }
+        }
+
+        // Reset history index, and flag so that 'undo' can save the latest
+        // state again.
+        self.history.index = 0;
+        log.info("New history index: {}", .{self.history.index});
+
+        self.paths.append(new_path) catch unreachable;
+
+        // Flag to note that the current state is not yet in the history buffer
+        self.history.outdated = true;
+    }
+
+    pub fn undo(self: *VnCtx) void {
+        log.info("buflen: {}, index: {}", .{self.history.buf.len(), self.history.index});
+
+        // Check if the current state is already in the history buffer. If it is
+        // not, save the current state.
+        if (self.history.outdated) {
+            self.history.outdated = false;
+
+            var arr_new = dupePathsArray(self.allocator, self.paths);
+            if (self.history.buf.pushFront(arr_new)) |to_free| {
+                freePathsArray(to_free);
+            }
+        }
+
+        // Make sure that we stay inside the buffer bounds
+        if (self.history.index >= self.history.buf.len()-1)
+            return;
+
+        self.history.index += 1;
+
+        if (self.history.buf.get(self.history.index)) |hist| {
+            freePathsArray(self.paths);
+            self.paths = dupePathsArray(self.allocator, hist);
+
+            log.info("New history index: {}", .{self.history.index});
+        } else {
+            log.err("Could not get the proper history index..? index = {}",
+                .{self.history.index});
+        }
+    }
+
+    pub fn redo(self: *VnCtx) void {
+        log.info("buflen: {}, index: {}", .{self.history.buf.len(), self.history.index});
+        // Make sure that we can redo something.
+        if (self.history.index == 0)
+            return;
+
+        self.history.index -= 1;
+
+        if (self.history.buf.get(self.history.index)) |hist| {
+            freePathsArray(self.paths);
+            self.paths = dupePathsArray(self.allocator, hist);
+
+            log.info("New history index: {}", .{self.history.index});
+        } else {
+            log.err("Could not get the proper history index..? index = {}",
+                .{self.history.index});
+        }
     }
 
     fn drawLines(vn: VnCtx, data: []const Vec2) void {
@@ -272,7 +403,7 @@ const VnCtx = struct {
             .scaling => |width| vn.vg.strokeWidth(@maximum(width * @floatCast(f32, vn.view.scale), 0.4)),
         }
 
-        vn.drawBezier(path.items());
+        vn.drawBezier(path.points);
     }
 
     fn drawCtrl(vn: VnCtx, data: []const Vec2) void {
@@ -361,14 +492,15 @@ pub fn main() anyerror!void {
     var vg = try nanovg.Wrapper.init(.GL3, &.{ .anti_alias, .stencil_strokes, .debug });
     defer vg.delete();
 
-    const fitting_params = .{
+    const fitter = BezierFit.init(allocator, .{
         .corner_thresh = std.math.pi * 0.6,
         .tangent_range = 20.0,
         .epsilon = 4.0,
         .psi = 80.0,
         .max_iter = 8,
-    };
-    var vn = VnCtx.init(allocator, vg, WIDTH, HEIGHT, fitting_params);
+    });
+
+    var vn = VnCtx.init(allocator, vg, WIDTH, HEIGHT, fitter);
     window.setUserPointer(VnCtx, &vn);
 
 
@@ -390,9 +522,9 @@ pub fn main() anyerror!void {
             vg.lineJoin(.miter);
             vg.strokeWidth(2.0);
 
-            if (vn.points.len() > 1) {
+            if (vn.points.items.len > 1) {
                 vg.strokeColor(nanovg.nvgRGBA(82, 144, 242, 255));
-                vn.drawLines(vn.points.items());
+                vn.drawLines(vn.points.items);
             }
 
             for (vn.paths.items) |path| {
@@ -401,7 +533,7 @@ pub fn main() anyerror!void {
                 vn.drawPath(path);
 
                 if (vn.debug) {
-                    vn.drawCtrl(path.items());
+                    vn.drawCtrl(path.points);
                 }
 
                 if (vn.draw_bounds) {
