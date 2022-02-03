@@ -63,6 +63,10 @@ pub fn Vec2(comptime T: type) type {
                 .y = v.y / l,
             };
         }
+
+        pub fn eql(v0: Self, v1: Self) bool {
+            return (v0.x == v1.x) and (v0.y == v1.y);
+        }
     };
 }
 

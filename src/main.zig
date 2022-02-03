@@ -57,6 +57,8 @@ fn keyCallback(
 
             .c => vn.cursor_mode = !vn.cursor_mode,
 
+            .n => vn.clearPaths(),
+
             else => {},
         },
 
@@ -130,7 +132,7 @@ fn mouseButtonCallback(
 
                     if (vn.points.items.len > 1) {
                         var fitted = vn.bezier_fit.fit(vn.points.items, vn.view.scale);
-                        var path = Path.fromArray(&fitted);
+                        var path = Path.initFromArray(&fitted) catch unreachable;
 
                         if (vn.stroke_scaling) {
                             path.setWidth(.{ .scaling = 2.0 / @floatCast(f32, vn.view.scale) });
@@ -191,7 +193,7 @@ fn framebufferSizeCallback(window: glfw.Window, width: u32, height: u32) void {
 fn dupePathsArray(allocator: std.mem.Allocator, paths: std.ArrayList(Path)) std.ArrayList(Path) {
     var slice = allocator.alloc(Path, paths.items.len) catch unreachable;
     for (paths.items) |path, i| {
-        slice[i] = path.dupe();
+        slice[i] = path.dupe() catch unreachable;
     }
     return std.ArrayList(Path).fromOwnedSlice(allocator, slice);
 }
@@ -234,6 +236,8 @@ const VnCtx = struct {
 
     points: std.ArrayList(Vec2),
     paths: std.ArrayList(Path),
+    selected: std.ArrayList(usize),
+
     history: struct {
         buf: RingBuffer(std.ArrayList(Path), 25),
         index: usize = 0,
@@ -265,6 +269,8 @@ const VnCtx = struct {
 
             .points = std.ArrayList(Vec2).init(allocator),
             .paths = std.ArrayList(Path).init(allocator),
+            .selected = std.ArrayList(usize).init(allocator),
+
             .history = .{ .buf = RingBuffer(std.ArrayList(Path), 25).init() },
 
             .bezier_fit = fitter,
@@ -278,6 +284,15 @@ const VnCtx = struct {
             path.deinit();
         }
         self.paths.deinit();
+    }
+
+    pub fn clearPaths(self: *VnCtx) void {
+        self.saveHistory();
+
+        for (self.paths.items) |path| {
+            path.deinit();
+        }
+        self.paths.clearRetainingCapacity();
     }
 
     pub fn addPath(self: *VnCtx, new_path: Path) void {
@@ -301,7 +316,7 @@ const VnCtx = struct {
     pub fn selectPath(self: *VnCtx, pos: Vec2) void {
         const selection_range = 10;
 
-        for (self.paths.items) |*path| {
+        for (self.paths.items) |*path, i| {
             const bounds = path.bounds.?;
 
             // Only check the paths whose bounds overlap with the mouse pos
@@ -310,7 +325,7 @@ const VnCtx = struct {
 
                 for (path.points) |point| {
                     if (point.dist(pos) <= selection_range) {
-                        path.selected = true;
+                        self.selected.append(i) catch unreachable;
                         break;
                     }
                 }
@@ -516,9 +531,13 @@ pub fn main() anyerror!void {
     var vg = try nanovg.Wrapper.init(.GL3, &.{ .anti_alias, .stencil_strokes, .debug });
     defer vg.delete();
 
+    const font_id = vg.createFont("NotoSans-Regular", "NotoSans-Regular.ttf");
+    vg.fontFaceId(font_id);
+    log.info("Font loaded: id={}", .{font_id});
+
     const fitter = BezierFit.init(allocator, .{
         .corner_thresh = std.math.pi * 0.6,
-        .tangent_range = 20.0,
+        .tangent_range = 30.0,
         .epsilon = 4.0,
         .psi = 80.0,
         .max_iter = 8,
@@ -552,10 +571,6 @@ pub fn main() anyerror!void {
                 vg.strokeWidth(2.0);
                 vn.drawPath(path);
 
-                if (path.selected) {
-                    vn.drawCtrl(path.points);
-                }
-
                 if (vn.debug) {
                     vn.drawCtrl(path.points);
                 }
@@ -563,6 +578,30 @@ pub fn main() anyerror!void {
                 if (vn.draw_bounds) {
                     vn.drawBounds(path.bounds);
                 }
+
+                // Temporary to test segment code
+                const segments: usize = (path.points.len-1) / 3;
+
+                var segment: usize = 0;
+                while (segment < segments) : (segment += 1) {
+                    const pos = vn.view.canvasToView(path.points[segment*3]);
+
+                    var buf: [128]u8 = undefined;
+                    const txt = try std.fmt.bufPrintZ(&buf, "{d:.2}", .{path.segment_lengths[segment]});
+
+                    _ = vg.text(@floatCast(f32, pos.x), @floatCast(f32, pos.y), txt, null);
+                }
+
+                // Temp to test path eval
+                const p = vn.view.canvasToView(path.eval(0.5));
+
+                vg.beginPath();
+                vg.circle(@floatCast(f32, p.x), @floatCast(f32, p.y), 5);
+                vg.fill();
+            }
+
+            for (vn.selected.items) |index| {
+                vn.drawCtrl(vn.paths.items[index].points);
             }
         }
         vg.restore();

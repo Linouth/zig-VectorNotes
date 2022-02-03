@@ -51,9 +51,6 @@ const FitCtx = struct {
 
     /// Calculate an average tangent vector using all points within a circle of
     /// `tangent_range` units.
-    ///
-    /// TODO: Fix this function. Somehow it returns tangents going into almost
-    /// the same direction every single time..?
     fn calcTangent(ctx: FitCtx, i_start: usize, i_end: usize, dir: Dir) Vec2 {
         const i_ep = switch (dir) {
             .right => i_start,
@@ -72,7 +69,20 @@ const FitCtx = struct {
             sum = sum.add(p_next);
         }
         sum = sum.scalarMult(1.0 / @intToFloat(f32, (i-1)));
-        return sum.sub(ctx.points[i_ep]).norm();
+
+        // Hacky workaround for when the sum == endpoint. This results in
+        // ret = NaN.
+        // TODO: Find a better solution for this
+        const ret = if (sum.eql(ctx.points[i_ep]))
+            ctx.points[if (dir == .right) i_ep + 1 else i_ep - 1]
+                .sub(ctx.points[i_ep]).norm()
+        else
+            sum.sub(ctx.points[i_ep]).norm();
+
+        if (std.math.isNan(ret.x)) @breakpoint();
+
+        return ret;
+        //return sum.sub(ctx.points[i_ep]).norm();
     }
 
     fn chordLengthParameterization(ctx: FitCtx, i_start: usize, i_end: usize) void {
@@ -135,9 +145,19 @@ const FitCtx = struct {
             // Only two points
 
             const dist = v0.dist(v3) / 3.0;
-            ctx.output.append(v0.add(t1.scalarMult(dist))) catch unreachable;
-            ctx.output.append(v3.add(t2.scalarMult(dist))) catch unreachable;
+            const v1 = v0.add(t1.scalarMult(dist));
+            const v2 = v3.add(t2.scalarMult(dist));
+
+            ctx.output.append(v1) catch unreachable;
+            ctx.output.append(v2) catch unreachable;
             ctx.output.append(v3) catch unreachable;
+
+            std.debug.assert(
+                !std.math.isNan(v1.x)
+                and !std.math.isNan(v2.x)
+                and !std.math.isNan(v3.x)
+            ); // Two points fit
+
             return;
         }
 
@@ -193,6 +213,11 @@ const FitCtx = struct {
         const v1 = v0.add(t1.scalarMult(a1));
         const v2 = v3.add(t2.scalarMult(a2));
 
+        if (std.math.isNan(v1.x)) @breakpoint();
+
+        std.debug.assert(!std.math.isNan(v1.x));
+        std.debug.assert(!std.math.isNan(v2.x));
+
         // Calculate the greatest error (distance^2) between the fitted curve
         // and input points.
         var max_err: f64 = 0.0;
@@ -237,7 +262,16 @@ const FitCtx = struct {
 
         //log.info("Splitting! err={}, i={}", .{@sqrt(max_err), i_max_err});
 
-        var t_split = ctx.points[i_max_err-1].sub(ctx.points[i_max_err+1]).norm();
+        var t_split = if (ctx.points[i_max_err-1].eql(ctx.points[i_max_err+1]))
+            // Workaround for when the two points around max_err are the same
+            ctx.points[i_max_err-1].sub(ctx.points[i_max_err]).norm()
+        else
+            // Take actual tangent around the trouble point
+            ctx.points[i_max_err-1].sub(ctx.points[i_max_err+1]).norm();
+
+        //var t_split = ctx.points[i_max_err-1].sub(ctx.points[i_max_err+1]).norm();
+
+        std.debug.assert(!std.math.isNan(t_split.x));
 
         ctx.chordLengthParameterization(i_start, i_max_err);
         ctx.fitBezier(t1, t_split, 0, i_start, i_max_err);
@@ -250,6 +284,9 @@ const FitCtx = struct {
     fn startFit(ctx: *FitCtx, i_start: usize, i_end: usize) void {
         const t1 = ctx.calcTangent(i_start, i_end, .right);
         const t2 = ctx.calcTangent(i_start, i_end, .left);
+
+        std.debug.assert(!std.math.isNan(t1.x));
+        std.debug.assert(!std.math.isNan(t2.x));
 
         ctx.chordLengthParameterization(i_start, i_end);
         ctx.fitBezier(t1, t2, 0, i_start, i_end);
@@ -312,6 +349,11 @@ pub fn fit(self: BezierFit, points: []const Vec2, scale: f64) Points {
     }
 
     ctx.startFit(i_start, points.len-1);
+
+    // TODO: Get rid of this once we are certain NaN bugs are gone.
+    for (ctx.output.items) |p| {
+        std.debug.assert(!std.math.isNan(p.x) and !std.math.isNan(p.y));
+    }
 
     return ctx.output;
 }

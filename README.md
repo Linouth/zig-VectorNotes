@@ -20,6 +20,9 @@ Some lists for me to pick from when I want to work on this project.
 - [ ] Don't render paths zoomed out too far
 - [ ] Save/load system
 - [ ] Extract NanoVG wrapper into a separate library
+- [ ] Proper memory error handling... (Get rid of `catch unreachable`)
+- [ ] Fix bug in fitting algo that results in a bunch of segments very close to
+  one another
 
 ### Future
 

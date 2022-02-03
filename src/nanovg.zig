@@ -288,8 +288,8 @@ pub const Wrapper = struct {
 
     // Text
 
-    pub fn createFont(self: Wrapper, name: []const u8, filename: []const u8) c_int {
-        nvgCreateFont(self.raw, name, filename);
+    pub fn createFont(self: Wrapper, name: [:0]const u8, filename: [:0]const u8) c_int {
+        return nvgCreateFont(self.raw, name.ptr, filename.ptr);
     }
 
     pub fn createFontAtIndex(self: Wrapper, name: []const u8, filename: []const u8, font_index: c_int) c_int {
@@ -352,8 +352,8 @@ pub const Wrapper = struct {
         nvgFontFace(self.raw, font);
     }
 
-    pub fn text(self: Wrapper, x: f32, y: f32, string: []const u8, end: []const u8) f32 {
-        nvgText(self.raw, x, y, string, end);
+    pub fn text(self: Wrapper, x: f32, y: f32, string: [*c]const u8, end: [*c]const u8) f32 {
+        return nvgText(self.raw, x, y, string, end);
     }
 
     pub fn textBox(self: Wrapper, x: f32, y: f32, break_row_width: f32, string: []const u8, end: []const u8) void {
