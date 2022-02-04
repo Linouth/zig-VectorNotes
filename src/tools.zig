@@ -5,33 +5,36 @@ const VnCtx = @import("root").VnCtx;
 const MouseState = @import("root").MouseState;
 const Vec2 = @import("root").Vec2;
 const Path = @import("Path.zig");
+const BezierFit = @import("bezier_fit.zig");
+
+const MouseButton = glfw.mouse_button.MouseButton;
 
 const ToolError = error {
 
-} || std.mem.Allocator.Error;
+};
 
 pub const Tool = struct {
     ptr: *anyopaque,
 
     vtable: struct {
-        onMouseButton: fn (ptr: *anyopaque, button: glfw.mouse_button.MouseButton, action: glfw.Action, mods: glfw.Mods) anyerror!void,
+        onMouseButton: fn (ptr: *anyopaque, button: MouseButton, action: glfw.Action, mods: glfw.Mods) anyerror!void,
         onMousePos: fn (ptr: *anyopaque, pos: Vec2) anyerror!void,
     },
 
     pub fn init(
         pointer: anytype,
-        comptime onMouseButtonFn: ?fn (ptr: @TypeOf(pointer), button: glfw.mouse_button.MouseButton, action: glfw.Action, mods: glfw.Mods) ToolError!void,
-        comptime onMousePosFn: ?fn (ptr: @TypeOf(pointer), pos: Vec2) ToolError!void
+        comptime onMouseButtonFn: ?fn (ptr: @TypeOf(pointer), button: MouseButton, action: glfw.Action, mods: glfw.Mods) anyerror!void,
+        comptime onMousePosFn: ?fn (ptr: @TypeOf(pointer), pos: Vec2) anyerror!void
     ) Tool {
         const Ptr = @TypeOf(pointer);
 
         const gen = struct {
             fn onMouseButtonImpl(
                 ptr: *anyopaque,
-                button: glfw.mouse_button.MouseButton,
+                button: MouseButton,
                 action: glfw.Action,
                 mods: glfw.Mods
-            ) ToolError!void {
+            ) !void {
                 const self = @ptrCast(Ptr, @alignCast(@alignOf(Ptr), ptr));
 
                 if (onMouseButtonFn) |func| {
@@ -39,10 +42,7 @@ pub const Tool = struct {
                 }
             }
 
-            fn onMousePosImpl(
-                ptr: *anyopaque,
-                pos: Vec2
-            ) ToolError!void {
+            fn onMousePosImpl(ptr: *anyopaque, pos: Vec2) !void {
                 const self = @ptrCast(Ptr, @alignCast(@alignOf(Ptr), ptr));
 
                 if (onMousePosFn) |func| {
@@ -63,31 +63,31 @@ pub const Tool = struct {
 
     pub fn onMouseButton(
         self: Tool,
-        button: glfw.mouse_button.MouseButton,
+        button: MouseButton,
         action: glfw.Action,
         mods: glfw.Mods
     ) !void {
         return self.vtable.onMouseButton(self.ptr, button, action, mods);
     }
 
-    pub fn onMousePos(
-        self: Tool,
-        pos: Vec2
-    ) !void {
+    pub fn onMousePos(self: Tool, pos: Vec2) !void {
         return self.vtable.onMousePos(self.ptr, pos);
     }
 };
 
 pub const Pencil = struct {
-    const RETAIN_POINTS = true;
+    const RETAIN_POINTS = false;
     const MIN_DIST = 4.0;
 
     vn: *VnCtx,
+    fitter: BezierFit,
+
     stroke_scaling: bool = false,
 
-    pub fn init(vn: *VnCtx) Pencil {
+    pub fn init(vn: *VnCtx, fitter: BezierFit) Pencil {
         return .{
             .vn = vn,
+            .fitter = fitter,
         };
     }
 
@@ -99,7 +99,7 @@ pub const Pencil = struct {
     /// curve. It also fits a curve to the points on release.
     fn onMouseButton(
         self: *Pencil,
-        button: glfw.mouse_button.MouseButton,
+        button: MouseButton,
         action: glfw.Action,
         mods: glfw.Mods
     ) !void {
@@ -126,7 +126,7 @@ pub const Pencil = struct {
                     // If there are more than 1 items in the list, perform the
                     // fitting operation.
                     if (self.vn.points.items.len > 1) {
-                        var fitted = self.vn.bezier_fit.fit(self.vn.points.items, self.vn.view.scale);
+                        var fitted = self.fitter.fit(self.vn.points.items, self.vn.view.scale);
                         var path = try Path.initFromArray(&fitted);
 
                         if (self.stroke_scaling) {
@@ -154,10 +154,7 @@ pub const Pencil = struct {
     }
 
     /// This function adds new points to the list while dragging the mouse.
-    fn onMousePos(
-        self: *Pencil,
-        pos: Vec2,
-    ) !void {
+    fn onMousePos(self: *Pencil, pos: Vec2) !void {
         if (self.vn.mouse.states.left == .press) {
             const points = self.vn.points.items;
 

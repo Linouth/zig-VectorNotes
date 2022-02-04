@@ -232,14 +232,12 @@ pub const VnCtx = struct {
         outdated: bool = true,
     },
 
-    bezier_fit: BezierFit,
-
     debug: bool = false,
     draw_bounds: bool = false,
     stroke_scaling: bool = false,
     cursor_mode: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, vg: nanovg.Wrapper, width: u32, height: u32, fitter: BezierFit) VnCtx {
+    pub fn init(allocator: std.mem.Allocator, vg: nanovg.Wrapper, width: u32, height: u32) VnCtx {
         return VnCtx {
             .allocator = allocator,
             .vg = vg,
@@ -250,11 +248,6 @@ pub const VnCtx = struct {
                 .scale = 1.0,
             },
             .mouse = undefined,
-            //.{
-            //    .pos = undefined,
-            //    .pos_pan_start = undefined,
-            //    .states = undefined,
-            //},
 
             .points = std.ArrayList(Vec2).init(allocator),
             .tools = std.ArrayList(tools.Tool).init(allocator),
@@ -263,8 +256,6 @@ pub const VnCtx = struct {
             .selected = std.ArrayList(usize).init(allocator),
 
             .history = .{ .buf = RingBuffer(std.ArrayList(Path), 25).init() },
-
-            .bezier_fit = fitter,
         };
     }
 
@@ -539,6 +530,9 @@ pub fn main() anyerror!void {
     vg.fontFaceId(font_id);
     log.info("Font loaded: id={}", .{font_id});
 
+    var vn = VnCtx.init(allocator, vg, WIDTH, HEIGHT);
+    window.setUserPointer(VnCtx, &vn);
+
     const fitter = BezierFit.init(allocator, .{
         .corner_thresh = std.math.pi * 0.6,
         .tangent_range = 30.0,
@@ -547,10 +541,7 @@ pub fn main() anyerror!void {
         .max_iter = 8,
     });
 
-    var vn = VnCtx.init(allocator, vg, WIDTH, HEIGHT, fitter);
-    window.setUserPointer(VnCtx, &vn);
-
-    var pencil = tools.Pencil.init(&vn);
+    var pencil = tools.Pencil.init(&vn, fitter);
     try vn.addTool(pencil.tool());
     vn.active_tool = &vn.tools.items[0];
 
