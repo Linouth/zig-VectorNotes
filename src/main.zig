@@ -7,6 +7,7 @@ const vec = @import("vec.zig");
 const Path = @import("Path.zig");
 const BezierFit = @import("bezier_fit.zig");
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
+const tools = @import("tools.zig");
 
 const log = std.log.scoped(.VectorNotes);
 
@@ -74,17 +75,7 @@ fn cursorPosCallback(window: glfw.Window, xpos: f64, ypos: f64) void {
         .y = ypos,
     };
 
-    const MouseButton = glfw.mouse_button.MouseButton;
-    if (vn.mouse.states[@enumToInt(MouseButton.left)] == .press) {
-        const points = vn.points.items;
-        const min_dist = 2.0;
-
-        const mouse_canvas = vn.view.viewToCanvas(vn.mouse.pos);
-        if (mouse_canvas.distSqr(points[points.len-1]) >=
-            (min_dist*min_dist / (vn.view.scale*vn.view.scale))) {
-            vn.points.append(mouse_canvas) catch unreachable;
-        }
-    } else if (vn.mouse.states[@enumToInt(MouseButton.middle)] == .press) {
+    if (vn.mouse.states.middle == .press) {
         const start_canvas = vn.view.viewToCanvas(vn.mouse.pos_pan_start);
         const now_canvas = vn.view.viewToCanvas(vn.mouse.pos);
 
@@ -94,6 +85,10 @@ fn cursorPosCallback(window: glfw.Window, xpos: f64, ypos: f64) void {
         vn.view.origin.y += -r.y;
 
         vn.mouse.pos_pan_start = vn.mouse.pos;
+    } else {
+        if (vn.active_tool) |tool| {
+            tool.onMousePos(vn.mouse.pos) catch unreachable;
+        }
     }
 }
 
@@ -104,52 +99,25 @@ fn mouseButtonCallback(
     mods: glfw.Mods
 ) void {
     _ = mods;
-
     var vn = window.getUserPointer(*VnCtx) orelse unreachable;
 
-    vn.mouse.states[@intCast(usize, @enumToInt(button))] = action;
+    var field = switch (button) {
+        .left => &vn.mouse.states.left,
+        .right => &vn.mouse.states.right,
+        .middle => &vn.mouse.states.middle,
+        .four => &vn.mouse.states.four,
+        .five => &vn.mouse.states.five,
+        .six => &vn.mouse.states.six,
+        .seven => &vn.mouse.states.seven,
+        .eight => &vn.mouse.states.eight,
+    };
+    field.* = action;
+
+    if (vn.active_tool) |tool| {
+        tool.onMouseButton(button, action, mods) catch unreachable;
+    }
 
     switch (button) {
-        .left => switch (action) {
-            .press => {
-                vn.points.clearRetainingCapacity();
-
-                if (vn.cursor_mode) {
-                    vn.selectPath(vn.view.viewToCanvas(vn.mouse.pos));
-                } else {
-                    vn.points.append(vn.view.viewToCanvas(vn.mouse.pos)) catch unreachable;
-                }
-            },
-
-            .release => {
-
-                if (!vn.cursor_mode) {
-                    const p_prev = vn.points.items[vn.points.items.len-1];
-                    const p = vn.view.viewToCanvas(vn.mouse.pos);
-                    if (p_prev.x != p.x and p_prev.y != p.y) {
-                        vn.points.append(p) catch unreachable;
-                    }
-
-                    if (vn.points.items.len > 1) {
-                        var fitted = vn.bezier_fit.fit(vn.points.items, vn.view.scale);
-                        var path = Path.initFromArray(&fitted) catch unreachable;
-
-                        if (vn.stroke_scaling) {
-                            path.setWidth(.{ .scaling = 2.0 / @floatCast(f32, vn.view.scale) });
-                        } else {
-                            path.setWidth(.{ .fixed = 2.0 });
-                        }
-
-                        vn.addPath(path);
-                    }
-
-                    //vn.points.clear();
-                }
-            },
-
-            else => {},
-        },
-
         .middle => switch (action) {
             .press => {
                 vn.mouse.pos_pan_start = vn.mouse.pos;
@@ -206,7 +174,27 @@ fn freePathsArray(paths: std.ArrayList(Path)) void {
     paths.deinit();
 }
 
-const VnCtx = struct {
+pub const MouseState = struct {
+    const NUM_MOUSE_STATES = 8;
+
+    pos: Vec2,
+    pos_pan_start: Vec2,
+
+    //states: [NUM_MOUSE_STATES]glfw.Action,
+
+    states: struct {
+        left: glfw.Action,
+        right: glfw.Action,
+        middle: glfw.Action,
+        four: glfw.Action,
+        five: glfw.Action,
+        six: glfw.Action,
+        seven: glfw.Action,
+        eight: glfw.Action,
+    },
+};
+
+pub const VnCtx = struct {
     allocator: std.mem.Allocator,
 
     vg: nanovg.Wrapper,
@@ -226,21 +214,21 @@ const VnCtx = struct {
         }
     },
 
-    mouse: struct {
-        const NUM_MOUSE_STATES = 8;
-
-        pos: Vec2,
-        pos_pan_start: Vec2,
-        states: [NUM_MOUSE_STATES]glfw.Action,
-    },
+    mouse: MouseState,
 
     points: std.ArrayList(Vec2),
+    tools: std.ArrayList(tools.Tool),
+    active_tool: ?*tools.Tool = null,
+
     paths: std.ArrayList(Path),
     selected: std.ArrayList(usize),
 
     history: struct {
         buf: RingBuffer(std.ArrayList(Path), 25),
         index: usize = 0,
+
+        /// Flag to make sure that `undo` will save the current state before
+        /// undoing.
         outdated: bool = true,
     },
 
@@ -261,13 +249,16 @@ const VnCtx = struct {
                 .origin = .{ .x = 0, .y = 0 },
                 .scale = 1.0,
             },
-            .mouse = .{
-                .pos = undefined,
-                .pos_pan_start = undefined,
-                .states = undefined,
-            },
+            .mouse = undefined,
+            //.{
+            //    .pos = undefined,
+            //    .pos_pan_start = undefined,
+            //    .states = undefined,
+            //},
 
             .points = std.ArrayList(Vec2).init(allocator),
+            .tools = std.ArrayList(tools.Tool).init(allocator),
+
             .paths = std.ArrayList(Path).init(allocator),
             .selected = std.ArrayList(usize).init(allocator),
 
@@ -284,15 +275,12 @@ const VnCtx = struct {
             path.deinit();
         }
         self.paths.deinit();
+
+        self.tools.deinit();
     }
 
-    pub fn clearPaths(self: *VnCtx) void {
-        self.saveHistory();
-
-        for (self.paths.items) |path| {
-            path.deinit();
-        }
-        self.paths.clearRetainingCapacity();
+    pub fn addTool(self: *VnCtx, tool: tools.Tool) !void {
+        try self.tools.append(tool);
     }
 
     pub fn addPath(self: *VnCtx, new_path: Path) void {
@@ -305,12 +293,28 @@ const VnCtx = struct {
         self.history.outdated = true;
     }
 
+    pub fn clearPaths(self: *VnCtx) void {
+        self.saveHistory();
+
+        for (self.paths.items) |path| {
+            path.deinit();
+        }
+        self.paths.clearRetainingCapacity();
+
+        // The selection indices are not relevant anymore.
+        self.selected.clearRetainingCapacity();
+
+        // This flag makes sure that undo will save the current state before
+        // undoing.
+        self.history.outdated = true;
+    }
+
     pub fn translatePath(self: *VnCtx, path_index: usize, translation: Vec2) void {
         self.saveHistory();
 
         self.paths.items[path_index] = self.paths.items[path_index].add(translation);
 
-        self.history.index = 0;
+        self.history.outdated = true;
     }
 
     pub fn selectPath(self: *VnCtx, pos: Vec2) void {
@@ -545,6 +549,12 @@ pub fn main() anyerror!void {
 
     var vn = VnCtx.init(allocator, vg, WIDTH, HEIGHT, fitter);
     window.setUserPointer(VnCtx, &vn);
+
+    var pencil = tools.Pencil.init(&vn);
+    try vn.addTool(pencil.tool());
+    vn.active_tool = &vn.tools.items[0];
+
+    //const tmp = .{ vec.Vec2(f64){ .x = 1.25e+02, .y = 1.68e+02 }, vec.Vec2(f64){ .x = 1.773480465119931e+02, .y = 1.7396715503155994e+02 }, vec.Vec2(f64){ .x = 3.234362350902816e+02, .y = 1.5025505963887355e+02 }, vec.Vec2(f64){ .x = 3.39e+02, .y = 8.8e+01 }, vec.Vec2(f64){ .x = 3.396387175245047e+02, .y = 8.544512990198099e+01 }, vec.Vec2(f64){ .x = 3.3986985788844277e+02, .y = 7.971746447211069e+01 }, vec.Vec2(f64){ .x = 3.37e+02, .y = 7.9e+01 }, vec.Vec2(f64){ .x = 3.3342187291728004e+02, .y = 7.810546822932001e+01 }, vec.Vec2(f64){ .x = 3.2868772964418076e+02, .y = 7.7e+01 }, vec.Vec2(f64){ .x = 3.25e+02, .y = 7.7e+01 }, vec.Vec2(f64){ .x = 3.189595085506635e+02, .y = 7.7e+01 }, vec.Vec2(f64){ .x = 3.108322484209403e+02, .y = 7.554193789476493e+01 }, vec.Vec2(f64){ .x = 3.05e+02, .y = 7.7e+01 }, vec.Vec2(f64){ .x = 2.367494113614384e+02, .y = 9.406264715964039e+01 }, vec.Vec2(f64){ .x = 2.9718211610905115e+02, .y = 1.7709051185459845e+02 }, vec.Vec2(f64){ .x = 2.74e+02, .y = 2.08e+02 }, vec.Vec2(f64){ .x = 2.7182194294611577e+02, .y = 2.1090407607184562e+02 }, vec.Vec2(f64){ .x = 2.685704276260913e+02, .y = 2.1342957237390868e+02 }, vec.Vec2(f64){ .x = 2.66e+02, .y = 2.16e+02 }, vec.Vec2(f64){ .x = 2.6304147219428637e+02, .y = 2.1895852780571363e+02 }, vec.Vec2(f64){ .x = 2.593402088286836e+02, .y = 2.214948433784873e+02 }, vec.Vec2(f64){ .x = 2.56e+02, .y = 2.24e+02 }, vec.Vec2(f64){ .x = 2.5246602133283852e+02, .y = 2.266504840003711e+02 }, vec.Vec2(f64){ .x = 2.4756088299622985e+02, .y = 2.2721955850188507e+02 }, vec.Vec2(f64){ .x = 2.44e+02, .y = 2.29e+02 }, vec.Vec2(f64){ .x = 2.0587747898828965e+02, .y = 2.4806126050585516e+02 }, vec.Vec2(f64){ .x = 1.15e+02, .y = 2.6746298242540155e+02 }, vec.Vec2(f64){ .x = 1.15e+02, .y = 3.2e+02 }, vec.Vec2(f64){ .x = 1.15e+02, .y = 3.298355327136036e+02 }, vec.Vec2(f64){ .x = 1.257114562527355e+02, .y = 3.3867786406318385e+02 }, vec.Vec2(f64){ .x = 1.35e+02, .y = 3.41e+02 }, vec.Vec2(f64){ .x = 1.73555792689085e+02, .y = 3.506389481722712e+02 }, vec.Vec2(f64){ .x = 2.1438527555033102e+02, .y = 3.503463533662164e+02 }, vec.Vec2(f64){ .x = 2.53e+02, .y = 3.6e+02 } };
 
     log.info("Starting render loop", .{});
 
