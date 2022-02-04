@@ -216,7 +216,6 @@ pub const VnCtx = struct {
 
     mouse: MouseState,
 
-    points: std.ArrayList(Vec2),
     tools: std.ArrayList(tools.Tool),
     active_tool: ?*tools.Tool = null,
 
@@ -249,7 +248,6 @@ pub const VnCtx = struct {
             },
             .mouse = undefined,
 
-            .points = std.ArrayList(Vec2).init(allocator),
             .tools = std.ArrayList(tools.Tool).init(allocator),
 
             .paths = std.ArrayList(Path).init(allocator),
@@ -260,8 +258,6 @@ pub const VnCtx = struct {
     }
 
     pub fn deinit(self: VnCtx) void {
-        self.points.deinit();
-
         for (self.paths.items) |path| {
             path.deinit();
         }
@@ -541,7 +537,10 @@ pub fn main() anyerror!void {
         .max_iter = 8,
     });
 
-    var pencil = tools.Pencil.init(&vn, fitter);
+    var points_buf = std.ArrayList(Vec2).init(allocator);
+    defer points_buf.deinit();
+
+    var pencil = tools.Pencil.init(&vn, &points_buf, fitter);
     try vn.addTool(pencil.tool());
     vn.active_tool = &vn.tools.items[0];
 
@@ -562,9 +561,8 @@ pub fn main() anyerror!void {
             vg.lineJoin(.miter);
             vg.strokeWidth(2.0);
 
-            if (vn.points.items.len > 1) {
-                vg.strokeColor(nanovg.nvgRGBA(82, 144, 242, 255));
-                vn.drawLines(vn.points.items);
+            if (vn.active_tool) |tool| {
+                tool.draw(vg);
             }
 
             for (vn.paths.items) |path| {

@@ -1,5 +1,6 @@
 const std = @import("std");
 const glfw = @import("glfw");
+const nanovg = @import("nanovg.zig");
 
 const VnCtx = @import("root").VnCtx;
 const MouseState = @import("root").MouseState;
@@ -19,12 +20,14 @@ pub const Tool = struct {
     vtable: struct {
         onMouseButton: fn (ptr: *anyopaque, button: MouseButton, action: glfw.Action, mods: glfw.Mods) anyerror!void,
         onMousePos: fn (ptr: *anyopaque, pos: Vec2) anyerror!void,
+        draw: fn (ptr: *anyopaque, vg: nanovg.Wrapper) void,
     },
 
     pub fn init(
         pointer: anytype,
         comptime onMouseButtonFn: ?fn (ptr: @TypeOf(pointer), button: MouseButton, action: glfw.Action, mods: glfw.Mods) anyerror!void,
-        comptime onMousePosFn: ?fn (ptr: @TypeOf(pointer), pos: Vec2) anyerror!void
+        comptime onMousePosFn: ?fn (ptr: @TypeOf(pointer), pos: Vec2) anyerror!void,
+        comptime drawFn: ?fn (ptr: @TypeOf(pointer), vg: nanovg.Wrapper) void
     ) Tool {
         const Ptr = @TypeOf(pointer);
 
@@ -49,6 +52,14 @@ pub const Tool = struct {
                     return func(self, pos);
                 }
             }
+
+            fn draw(ptr: *anyopaque, vg: nanovg.Wrapper) void {
+                const self = @ptrCast(Ptr, @alignCast(@alignOf(Ptr), ptr));
+
+                if (drawFn) |func| {
+                    return func(self, vg);
+                }
+            }
         };
 
         return .{
@@ -57,6 +68,7 @@ pub const Tool = struct {
             .vtable = .{
                 .onMouseButton = gen.onMouseButtonImpl,
                 .onMousePos = gen.onMousePosImpl,
+                .draw = gen.draw,
             },
         };
     }
@@ -73,6 +85,10 @@ pub const Tool = struct {
     pub fn onMousePos(self: Tool, pos: Vec2) !void {
         return self.vtable.onMousePos(self.ptr, pos);
     }
+
+    pub fn draw(self: Tool, vg: nanovg.Wrapper) void {
+        return self.vtable.draw(self.ptr, vg);
+    }
 };
 
 pub const Pencil = struct {
@@ -80,19 +96,21 @@ pub const Pencil = struct {
     const MIN_DIST = 4.0;
 
     vn: *VnCtx,
+    points: *std.ArrayList(Vec2),
     fitter: BezierFit,
 
     stroke_scaling: bool = false,
 
-    pub fn init(vn: *VnCtx, fitter: BezierFit) Pencil {
+    pub fn init(vn: *VnCtx, points_buf: *std.ArrayList(Vec2), fitter: BezierFit) Pencil {
         return .{
             .vn = vn,
+            .points = points_buf,
             .fitter = fitter,
         };
     }
 
     pub fn tool(self: *Pencil) Tool {
-        return Tool.init(self, onMouseButton, onMousePos);
+        return Tool.init(self, onMouseButton, onMousePos, draw);
     }
 
     /// This function handles placing of a start and end point when drawing a
@@ -109,24 +127,24 @@ pub const Pencil = struct {
             .left => switch (action) {
                 .press => {
                     if (RETAIN_POINTS)
-                        self.vn.points.clearRetainingCapacity();
+                        self.points.clearRetainingCapacity();
 
-                    try self.vn.points.append(self.vn.view.viewToCanvas(self.vn.mouse.pos));
+                    try self.points.append(self.vn.view.viewToCanvas(self.vn.mouse.pos));
                 },
 
                 .release => {
-                    const p_prev = self.vn.points.items[self.vn.points.items.len-1];
+                    const p_prev = self.points.items[self.points.items.len-1];
                     const p = self.vn.view.viewToCanvas(self.vn.mouse.pos);
 
                     // If the release position is not yet in the list, add it.
                     if (p_prev.x != p.x and p_prev.y != p.y) {
-                        try self.vn.points.append(p);
+                        try self.points.append(p);
                     }
 
                     // If there are more than 1 items in the list, perform the
                     // fitting operation.
-                    if (self.vn.points.items.len > 1) {
-                        var fitted = self.fitter.fit(self.vn.points.items, self.vn.view.scale);
+                    if (self.points.items.len > 1) {
+                        var fitted = self.fitter.fit(self.points.items, self.vn.view.scale);
                         var path = try Path.initFromArray(&fitted);
 
                         if (self.stroke_scaling) {
@@ -141,7 +159,7 @@ pub const Pencil = struct {
                     }
 
                     if (!RETAIN_POINTS)
-                        self.vn.points.clearRetainingCapacity();
+                        self.points.clearRetainingCapacity();
                 },
 
                 // Ignore other actions
@@ -156,14 +174,32 @@ pub const Pencil = struct {
     /// This function adds new points to the list while dragging the mouse.
     fn onMousePos(self: *Pencil, pos: Vec2) !void {
         if (self.vn.mouse.states.left == .press) {
-            const points = self.vn.points.items;
+            const points = self.points.items;
 
             const mouse_canvas = self.vn.view.viewToCanvas(pos);
             const scale = self.vn.view.scale;
             if (mouse_canvas.distSqr(points[points.len-1]) >=
                 (MIN_DIST*MIN_DIST / (scale*scale))) {
-                try self.vn.points.append(mouse_canvas);
+                try self.points.append(mouse_canvas);
             }
+        }
+    }
+
+    fn draw(self: *Pencil, vg: nanovg.Wrapper) void {
+        if (self.points.items.len > 1) {
+            vg.strokeColor(nanovg.nvgRGBA(82, 144, 242, 255));
+
+            // TODO: drawLines helper function (already in VnCtx)
+            vg.beginPath();
+
+            const p = self.vn.view.canvasToView(self.points.items[0]);
+            vg.moveTo(@floatCast(f32, p.x), @floatCast(f32, p.y));
+
+            for (self.points.items[1..]) |point| {
+                const p_screen = self.vn.view.canvasToView(point);
+                vg.lineTo(@floatCast(f32, p_screen.x), @floatCast(f32, p_screen.y));
+            }
+            vg.stroke();
         }
     }
 };
