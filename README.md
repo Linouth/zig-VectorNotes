@@ -21,7 +21,7 @@ Some lists for me to pick from when I want to work on this project.
 - [ ] Save/load system
 - [ ] Extract NanoVG wrapper into a separate library
 - [ ] Proper memory error handling... (Get rid of `catch unreachable`)
-- Fitting algo
+- [ ] Fitting algo
     - [ ] Fix bug that results in a bunch of segments very close to one another
     - [ ] Fix bug where a point is sometimes placed somewhat randomly, sometimes
       very far away
