@@ -160,9 +160,7 @@ pub fn eval(self: Path, u: f32) Vec2 {
     }
 
     // Calculate the parameter ranging from 0 to 1 for the correct segment
-    const u_seg = (u_rel - u_total) / self.segment_lengths[seg_i];
-
-    log.info("{}", .{u_seg});
+    var u_seg = (u_rel - u_total) / self.segment_lengths[seg_i];
 
     std.debug.assert(u_seg >= 0 and u_seg <= 1.0001);
     if (u_seg > 1.0) u_seg = 1.0; // Floats...
