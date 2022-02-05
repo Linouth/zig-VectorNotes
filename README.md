@@ -13,7 +13,8 @@ Some lists for me to pick from when I want to work on this project.
 - [x] Port my C program to Zig
 - [x] Undo/Redo system
 - [x] Better tools implementation
-- [ ] Selection tool
+- [x] Selection tool
+- [ ] Optimize selection (prevent checks if user is zoomed in far)
 - [ ] Deletion tool
 - [x] Map 0 to 1 parameters to a whole bezier Path and evaluate the path
 - [ ] Only render paths in view

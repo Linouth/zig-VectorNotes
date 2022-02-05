@@ -63,6 +63,24 @@ fn keyCallback(
             .one => vn.active_tool = &vn.tools.items[0],
             .two => vn.active_tool = &vn.tools.items[1],
 
+            .delete, .backspace => {
+                vn.saveHistory();
+
+                // We will be using `swapRemove` to remove items from the paths
+                // list. This changes the index of the last element. Go through
+                // the indices from last to first so that this wont be an issue.
+                std.sort.sort(usize, vn.selected.items, {}, comptime std.sort.desc(usize));
+
+                for (vn.selected.items) |sel| {
+                    var p = vn.paths.swapRemove(sel);
+
+                    // Free the removed path
+                    p.deinit();
+                }
+
+                vn.selected.clearRetainingCapacity();
+            },
+
             else => {},
         },
 
@@ -278,9 +296,6 @@ pub const VnCtx = struct {
 
         // Add the new path to the pathlist
         self.paths.append(new_path) catch unreachable;
-
-        // Flag to note that the current state is not yet in the history buffer
-        self.history.outdated = true;
     }
 
     pub fn clearPaths(self: *VnCtx) void {
@@ -293,41 +308,17 @@ pub const VnCtx = struct {
 
         // The selection indices are not relevant anymore.
         self.selected.clearRetainingCapacity();
-
-        // This flag makes sure that undo will save the current state before
-        // undoing.
-        self.history.outdated = true;
     }
 
     pub fn translatePath(self: *VnCtx, path_index: usize, translation: Vec2) void {
         self.saveHistory();
 
         self.paths.items[path_index] = self.paths.items[path_index].add(translation);
-
-        self.history.outdated = true;
     }
 
-    pub fn selectPath(self: *VnCtx, pos: Vec2) void {
-        const selection_range = 10;
-
-        for (self.paths.items) |*path, i| {
-            const bounds = path.bounds.?;
-
-            // Only check the paths whose bounds overlap with the mouse pos
-            if ((pos.x > bounds[0].x and pos.x < bounds[1].x) and
-                (pos.y > bounds[0].y and pos.y < bounds[1].y)) {
-
-                for (path.points) |point| {
-                    if (point.dist(pos) <= selection_range) {
-                        self.selected.append(i) catch unreachable;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Saves the current state to the history list
+    /// Saves the current state to the history list. Calling this function also
+    /// flags the history as outdated, which makes sure that `undo` will save
+    /// the state before the next undo action.
     fn saveHistory(self: *VnCtx) void {
         // Set the new startpoint of the history buffer to the current history
         // index. This is done so that you cannot redo something after adding a
@@ -351,6 +342,10 @@ pub const VnCtx = struct {
         // Reset history index. Essentially invalidating 'newer' (not redone)
         // entries.
         self.history.index = 0;
+
+        // Flag next undo to save the state before undoing (it __should__
+        // be a new unknown state)
+        self.history.outdated = true;
     }
 
     pub fn undo(self: *VnCtx) void {
@@ -606,7 +601,13 @@ pub fn main() anyerror!void {
             }
 
             for (vn.selected.items) |index| {
-                vn.drawCtrl(vn.paths.items[index].points);
+                const path = vn.paths.items[index];
+                vn.drawCtrl(path.points);
+
+                vg.strokeColor(nanovg.nvgRGBA(30, 255, 255, 200));
+
+                vg.strokeWidth(1.0);
+                vn.drawBezier(path.points);
             }
         }
         vg.restore();

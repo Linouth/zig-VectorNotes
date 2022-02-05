@@ -123,52 +123,47 @@ pub const Pencil = struct {
     ) !void {
         _ = mods;
 
-        switch (button) {
-            .left => switch (action) {
-                .press => {
-                    if (RETAIN_POINTS)
-                        self.points.clearRetainingCapacity();
+        if (button == .left) switch (action) {
+            .press => {
+                if (RETAIN_POINTS)
+                    self.points.clearRetainingCapacity();
 
-                    try self.points.append(self.vn.view.viewToCanvas(self.vn.mouse.pos));
-                },
-
-                .release => {
-                    const p_prev = self.points.items[self.points.items.len-1];
-                    const p = self.vn.view.viewToCanvas(self.vn.mouse.pos);
-
-                    // If the release position is not yet in the list, add it.
-                    if (p_prev.x != p.x and p_prev.y != p.y) {
-                        try self.points.append(p);
-                    }
-
-                    // If there are more than 1 items in the list, perform the
-                    // fitting operation.
-                    if (self.points.items.len > 1) {
-                        var fitted = self.fitter.fit(self.points.items, self.vn.view.scale);
-                        var path = try Path.initFromArray(&fitted);
-
-                        if (self.stroke_scaling) {
-                            path.setWidth(.{ .scaling = 2.0 / @floatCast(f32, self.vn.view.scale) });
-                        } else {
-                            path.setWidth(.{ .fixed = 2.0 });
-                        }
-
-                        // TODO: Should this be here? Maybe save the output
-                        // somewhere and then save it on `update`
-                        self.vn.addPath(path);
-                    }
-
-                    if (!RETAIN_POINTS)
-                        self.points.clearRetainingCapacity();
-                },
-
-                // Ignore other actions
-                else => {},
+                try self.points.append(self.vn.view.viewToCanvas(self.vn.mouse.pos));
             },
 
-            // Ignore other buttons
+            .release => {
+                const p_prev = self.points.items[self.points.items.len-1];
+                const p = self.vn.view.viewToCanvas(self.vn.mouse.pos);
+
+                // If the release position is not yet in the list, add it.
+                if (p_prev.x != p.x and p_prev.y != p.y) {
+                    try self.points.append(p);
+                }
+
+                // If there are more than 1 items in the list, perform the
+                // fitting operation.
+                if (self.points.items.len > 1) {
+                    var fitted = self.fitter.fit(self.points.items, self.vn.view.scale);
+                    var path = try Path.initFromArray(&fitted);
+
+                    if (self.stroke_scaling) {
+                        path.setWidth(.{ .scaling = 2.0 / @floatCast(f32, self.vn.view.scale) });
+                    } else {
+                        path.setWidth(.{ .fixed = 2.0 });
+                    }
+
+                    // TODO: Should this be here? Maybe save the output
+                    // somewhere and then save it on `update`
+                    self.vn.addPath(path);
+                }
+
+                if (!RETAIN_POINTS)
+                    self.points.clearRetainingCapacity();
+            },
+
+            // Ignore other actions
             else => {},
-        }
+        };
     }
 
     /// This function adds new points to the list while dragging the mouse.
@@ -230,46 +225,57 @@ pub const Selection = struct {
     ) !void {
         _ = mods;
 
-        switch (button) {
-            .left => switch (action) {
-                .press => {
-                    if (self.points.items.len > 0)
-                        self.points.clearRetainingCapacity();
+        if (button == .left) switch (action) {
+            .press => {
+                if (self.points.items.len > 0)
+                    self.points.clearRetainingCapacity();
 
-                    try self.points.append(self.vn.view.viewToCanvas(self.vn.mouse.pos));
-                },
+                try self.points.append(self.vn.view.viewToCanvas(self.vn.mouse.pos));
+            },
 
-                .release => {
+            .release => {
+                // If there is more than one item in the list, check wether
+                // there are paths inside the shape, and add them to the
+                // selected list.
+                if (self.points.items.len > 1) {
+
                     // Close the loop
                     try self.points.append(self.points.items[0]);
 
-                    // If there is more than one item in the list, check wether
-                    // there are paths inside the shape, and add them to the
-                    // selected list.
-                    if (self.points.items.len > 1) {
-                        const bounds = calcBoundsForPoints(self.points.items);
+                    const bounds = calcBoundsForPoints(self.points.items);
 
-                        for (self.vn.paths.items) |path, path_index| {
-                            if (!doBoundsOverlap(path.bounds.?, bounds))
-                                continue;
+                    for (self.vn.paths.items) |path, path_index| {
 
-                            if (!self.isPathInSelection(path))
-                                continue;
+                        // Skip paths that are already selected.
+                        if (std.mem.indexOfScalar(usize, self.vn.selected.items, path_index)) |_|
+                            continue;
 
-                            try self.vn.selected.append(path_index);
-                        }
+                        // Skip paths that do not overlap with the selection
+                        // path.
+                        // TODO: Prevent checking if the selection bound is
+                        // much smaller than the path bound. I.e. if the
+                        // user is zoomed in very far.
+                        if (!doBoundsOverlap(path.bounds.?, bounds))
+                            continue;
+
+                        // Skip paths from which at least one test point
+                        // is not inside of the selection path.
+                        if (!self.isPathInSelection(path))
+                            continue;
+
+                        try self.vn.selected.append(path_index);
                     }
+                } else {
+                    // This was a single click somewhere else. Deselect.
+                    self.vn.selected.clearRetainingCapacity();
+                }
 
-                    self.points.clearRetainingCapacity();
-                },
-
-                // Ignore other actions
-                else => {},
+                self.points.clearRetainingCapacity();
             },
 
-            // Ignore other buttons
+            // Ignore other actions
             else => {},
-        }
+        };
     }
 
     /// This function adds new points to the list while dragging the mouse.
