@@ -353,7 +353,8 @@ pub const Selection = struct {
 
     // TODO: Should be part of `Path`
     inline fn doBoundsOverlap(b0: [2]Vec2, b1: [2]Vec2) bool {
-        return isPointInBounds(b0[0], b1) or isPointInBounds(b0[1], b1);
+        return isPointInBounds(b0[0], b1) or isPointInBounds(b0[1], b1)
+            or isPointInBounds(b1[0], b0) or isPointInBounds(b1[1], b0);
     }
 
     // TODO: Should be part of `Path`
