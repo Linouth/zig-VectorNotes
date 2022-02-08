@@ -139,7 +139,6 @@ fn evaluateBezierSegment(u: f32, p: []const Vec2) Vec2 {
 }
 
 pub fn eval(self: Path, u: f32) Vec2 {
-    // TODO: Proper error
     std.debug.assert(u >= 0 and u <= 1);
 
     const u_rel = u * self.length;

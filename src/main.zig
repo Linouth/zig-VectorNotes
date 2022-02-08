@@ -42,12 +42,14 @@ fn keyCallback(
             .b => vn.draw_bounds = !vn.draw_bounds,
 
             .s => {
-                if (vn.stroke_scaling) {
+                const pencil = vn.tools.items[0].cast(tools.Pencil);
+
+                if (pencil.stroke_scaling) {
                     log.info("Changing stroke mode to fixed", .{});
                 } else {
                     log.info("Changing stroke mode to scaling", .{});
                 }
-                vn.stroke_scaling = !vn.stroke_scaling;
+                pencil.stroke_scaling = !pencil.stroke_scaling;
             },
 
             .z => if (mods.control and mods.shift) {
@@ -55,8 +57,6 @@ fn keyCallback(
             } else if (mods.control) {
                 vn.undo();
             },
-
-            .c => vn.cursor_mode = !vn.cursor_mode,
 
             .n => vn.clearPaths(),
 
@@ -159,7 +159,7 @@ fn scrollCallback(window: glfw.Window, xoffset: f64, yoffset: f64) void {
     if (yoffset != 0.0) {
         const mouse_before = vn.view.viewToCanvas(vn.mouse.pos);
 
-        const SCALING_FACTOR: f64 = 1.05;
+        const SCALING_FACTOR: f64 = 1.10;
         vn.view.scale *= if (yoffset > 0) SCALING_FACTOR else 1/SCALING_FACTOR;
 
         const mouse_after = vn.view.viewToCanvas(vn.mouse.pos);
@@ -255,7 +255,6 @@ pub const VnCtx = struct {
     debug: bool = false,
     draw_bounds: bool = false,
     stroke_scaling: bool = false,
-    cursor_mode: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, vg: nanovg.Wrapper, width: u32, height: u32) VnCtx {
         return VnCtx {
@@ -425,12 +424,17 @@ pub const VnCtx = struct {
     }
 
     fn drawPath(vn: VnCtx, path: Path) void {
-        switch (path.width) {
-            .fixed => |width| vn.vg.strokeWidth(width),
-            .scaling => |width| vn.vg.strokeWidth(@maximum(width * @floatCast(f32, vn.view.scale), 0.4)),
-        }
+        const MIN_WIDTH = 0.1;
 
-        vn.drawBezier(path.points);
+        const stroke_width = switch (path.width) {
+            .fixed => |width| width,
+            .scaling => |width| width * @floatCast(f32, vn.view.scale),
+        };
+
+        if (stroke_width > MIN_WIDTH) {
+            vn.vg.strokeWidth(stroke_width);
+            vn.drawBezier(path.points);
+        }
     }
 
     fn drawCtrl(vn: VnCtx, data: []const Vec2) void {
@@ -500,6 +504,10 @@ pub fn main() anyerror!void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
+    //var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    //defer _ = gpa.deinit();
+    //const allocator = gpa.allocator();
+
     try glfw.init(.{});
     defer glfw.terminate();
 
@@ -528,7 +536,7 @@ pub fn main() anyerror!void {
     window.setUserPointer(VnCtx, &vn);
 
     const fitter = BezierFit.init(allocator, .{
-        .corner_thresh = std.math.pi * 0.6,
+        .corner_thresh = std.math.pi * 0.5,
         .tangent_range = 30.0,
         .epsilon = 4.0,
         .psi = 80.0,
@@ -559,7 +567,7 @@ pub fn main() anyerror!void {
         vg.save();
         {
             vg.lineCap(.round);
-            vg.lineJoin(.miter);
+            vg.lineJoin(.bevel);
             vg.strokeWidth(2.0);
 
             if (vn.active_tool) |tool| {
@@ -580,24 +588,24 @@ pub fn main() anyerror!void {
                 }
 
                 // Temporary to test segment code
-                const segments: usize = (path.points.len-1) / 3;
+                //const segments: usize = (path.points.len-1) / 3;
 
-                var segment: usize = 0;
-                while (segment < segments) : (segment += 1) {
-                    const pos = vn.view.canvasToView(path.points[segment*3]);
+                //var segment: usize = 0;
+                //while (segment < segments) : (segment += 1) {
+                //    const pos = vn.view.canvasToView(path.points[segment*3]);
 
-                    var buf: [128]u8 = undefined;
-                    const txt = try std.fmt.bufPrintZ(&buf, "{d:.2}", .{path.segment_lengths[segment]});
+                //    var buf: [128]u8 = undefined;
+                //    const txt = try std.fmt.bufPrintZ(&buf, "{d:.2}", .{path.segment_lengths[segment]});
 
-                    _ = vg.text(@floatCast(f32, pos.x), @floatCast(f32, pos.y), txt, null);
-                }
+                //    _ = vg.text(@floatCast(f32, pos.x), @floatCast(f32, pos.y), txt, null);
+                //}
 
                 // Temp to test path eval
-                const p = vn.view.canvasToView(path.eval(0.5));
+                //const p = vn.view.canvasToView(path.eval(0.5));
 
-                vg.beginPath();
-                vg.circle(@floatCast(f32, p.x), @floatCast(f32, p.y), 5);
-                vg.fill();
+                //vg.beginPath();
+                //vg.circle(@floatCast(f32, p.x), @floatCast(f32, p.y), 5);
+                //vg.fill();
             }
 
             for (vn.selected.items) |index| {
@@ -616,7 +624,8 @@ pub fn main() anyerror!void {
         // Do logic stuff (perform 'tool' operations)
 
         try window.swapBuffers();
-        try glfw.waitEventsTimeout(1/60);
+        try glfw.waitEventsTimeout(5);
+        //try glfw.waitEvents();
     }
 }
 

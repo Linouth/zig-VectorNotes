@@ -73,6 +73,10 @@ pub const Tool = struct {
         };
     }
 
+    pub fn cast(self: Tool, comptime T:  type) *T{
+        return @ptrCast(*T, @alignCast(@alignOf(T), self.ptr));
+    }
+
     pub fn onMouseButton(
         self: Tool,
         button: MouseButton,
@@ -92,8 +96,8 @@ pub const Tool = struct {
 };
 
 pub const Pencil = struct {
-    const RETAIN_POINTS = false;
-    const MIN_DIST = 4.0;
+    const RETAIN_POINTS = true;
+    const MIN_DIST = 1.0;
 
     vn: *VnCtx,
     points: *std.ArrayList(Vec2),
@@ -140,6 +144,9 @@ pub const Pencil = struct {
                     try self.points.append(p);
                 }
 
+                // TODO: Check if this really is beneficial
+                movingAvg(1, self.points.items);
+
                 // If there are more than 1 items in the list, perform the
                 // fitting operation.
                 if (self.points.items.len > 1) {
@@ -169,14 +176,16 @@ pub const Pencil = struct {
     /// This function adds new points to the list while dragging the mouse.
     fn onMousePos(self: *Pencil, pos: Vec2) !void {
         if (self.vn.mouse.states.left == .press) {
-            const points = self.points.items;
+            //const points = self.points.items;
 
             const mouse_canvas = self.vn.view.viewToCanvas(pos);
-            const scale = self.vn.view.scale;
-            if (mouse_canvas.distSqr(points[points.len-1]) >=
-                (MIN_DIST*MIN_DIST / (scale*scale))) {
-                try self.points.append(mouse_canvas);
-            }
+            //const scale = self.vn.view.scale;
+            //if (mouse_canvas.distSqr(points[points.len-1]) >=
+            //    (MIN_DIST*MIN_DIST / (scale*scale))) {
+            //    try self.points.append(mouse_canvas);
+            //}
+
+            try self.points.append(mouse_canvas);
         }
     }
 
@@ -399,3 +408,17 @@ pub const Selection = struct {
         return true;
     }
 };
+
+fn movingAvg(filter_window: usize, buf: []Vec2) void {
+    var i: usize = filter_window;
+    while (i < (buf.len - filter_window)) : (i += 1) {
+        var avg = Vec2{.x = 0, .y = 0};
+        var j: usize = i - filter_window;
+        while (j <= i + filter_window) : (j += 1) {
+            avg = avg.add(buf[j]);
+        }
+        avg = avg.scalarMult(1.0 / @intToFloat(f32, filter_window*2 + 1));
+
+        buf[i] = avg;
+    }
+}
