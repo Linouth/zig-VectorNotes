@@ -233,7 +233,7 @@ pub const Selection = struct {
         mods: glfw.Mods
     ) !void {
         _ = mods;
-
+        
         if (button == .left) switch (action) {
             .press => {
                 if (self.points.items.len > 0)
@@ -259,11 +259,27 @@ pub const Selection = struct {
                         if (std.mem.indexOfScalar(usize, self.vn.selected.items, path_index)) |_|
                             continue;
 
+                        // Skip paths whose bounds are much larger than the
+                        // selection area. A seleciton path can never select a
+                        // larger path than itself.
+                        // TODO: Move area calc of 'rect' path (bounds) to
+                        // `Path` struct.
+                        const path_bounds_area = blk: {
+                            const b = path.bounds.?;
+                            const dx = std.math.fabs(b[1].x - b[0].x);
+                            const dy = std.math.fabs(b[1].y - b[0].y);
+                            break :blk dx * dy;
+                        };
+                        const sel_bounds_area = blk :{
+                            const dx = std.math.fabs(bounds[1].x - bounds[0].x);
+                            const dy = std.math.fabs(bounds[1].y - bounds[0].y);
+                            break :blk dx * dy;
+                        };
+                        if (sel_bounds_area < path_bounds_area*0.7)
+                            continue;
+
                         // Skip paths that do not overlap with the selection
                         // path.
-                        // TODO: Prevent checking if the selection bound is
-                        // much smaller than the path bound. I.e. if the
-                        // user is zoomed in very far.
                         if (!doBoundsOverlap(path.bounds.?, bounds))
                             continue;
 

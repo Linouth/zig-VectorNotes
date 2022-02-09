@@ -14,7 +14,7 @@ Some lists for me to pick from when I want to work on this project.
 - [x] Undo/Redo system
 - [x] Better tools implementation
 - [x] Selection tool
-- [ ] Optimize selection (prevent checks if user is zoomed in far)
+- [x] Optimize selection (prevent checks if user is zoomed in far)
 - [ ] Deletion tool
 - [x] Map 0 to 1 parameters to a whole bezier Path and evaluate the path
 - [ ] Only render paths in view
@@ -23,6 +23,11 @@ Some lists for me to pick from when I want to work on this project.
 - [ ] Extract NanoVG wrapper into a separate library
 - [ ] Proper memory error handling... (Get rid of `catch unreachable`)
 - [ ] Squash memory leaks
+- [ ] Minimal UI
+- [ ] Better bounds calc for bezier paths
+- [ ] Path interface or something to support different types of paths. Bezier,
+  Rect, circle/ellipse, line segments. All with a `bounds`, `draw` and `eval`
+  function.
 
 ### Bugs
 
