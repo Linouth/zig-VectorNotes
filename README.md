@@ -25,9 +25,11 @@ Some lists for me to pick from when I want to work on this project.
 - [ ] Squash memory leaks
 - [ ] Minimal UI
 - [ ] Better bounds calc for bezier paths
-- [ ] Path interface or something to support different types of paths. Bezier,
-  Rect, circle/ellipse, line segments. All with a `bounds`, `draw` and `eval`
-  function.
+- [ ] Update Path interface
+    - [x] Refactor Path and Canvas systems
+    - [x] Eval for different path types (System is in place, specific eval
+      functions not yet)
+    - [ ] New draw system for paths
 
 ### Bugs
 
@@ -38,6 +40,8 @@ Some lists for me to pick from when I want to work on this project.
     - [ ] Fix bug where a point is sometimes placed somewhat randomly, sometimes
       very far away
     - [ ] The fit shifts what seems like a contant amount when zoomed in far
+- [ ] Selection failure; Sometimes a selection that should work, does not select
+  the path.
 
 ### Future
 

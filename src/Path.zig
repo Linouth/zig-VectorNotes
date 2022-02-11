@@ -24,7 +24,27 @@ const PathError = error {
     UnimplementedPathType,
 };
 
-const Bounds = [2]Vec2;
+pub const Bounds = struct {
+    a: Vec2,
+    b: Vec2,
+
+    pub inline fn pointIn(self: Bounds, point: Vec2) bool {
+        return
+            (point.x > self.a.x and point.x < self.b.x) and
+            (point.y > self.a.y and point.y < self.b.y);
+    }
+
+    pub inline fn overlap(self: Bounds, other: Bounds) bool {
+        return self.pointIn(other.a) or self.pointIn(other.b)
+            or other.pointIn(self.a) or other.pointIn(self.b);
+    }
+
+    pub inline fn area(self: Bounds) f64 {
+        const dx = std.math.fabs(self.b.x - self.a.x);
+        const dy = std.math.fabs(self.b.y - self.a.y);
+        return dx * dy;
+    }
+};
 
 // This could also hold `WidthScaling` (encoding), but that makes changing the
 // scaling dynamically difficult.
@@ -80,19 +100,19 @@ fn calcBounds(self: Path) Bounds {
     var out: ?Bounds = null;
     for (self.points) |point| {
         if (out) |*bounds| {
-            if (point.x < bounds[0].x)
-                bounds[0].x = point.x;
+            if (point.x < bounds.a.x)
+                bounds.a.x = point.x;
 
-            if (point.y < bounds[0].y)
-                bounds[0].y = point.y;
+            if (point.y < bounds.a.y)
+                bounds.a.y = point.y;
 
-            if (point.x > bounds[1].x)
-                bounds[1].x = point.x;
+            if (point.x > bounds.b.x)
+                bounds.b.x = point.x;
 
-            if (point.y > bounds[1].y)
-                bounds[1].y = point.y;
+            if (point.y > bounds.b.y)
+                bounds.b.y = point.y;
         } else {
-            out = .{ point, point };
+            out = .{ .a = point, .b = point };
         }
     }
     return out.?;

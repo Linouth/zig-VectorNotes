@@ -264,7 +264,8 @@ pub const Selection = struct {
                     // Close the loop
                     try self.points.append(self.points.items[0]);
 
-                    const sel_bounds = calcBoundsForPoints(self.points.items);
+                    const sel_path = Path.init(self.points.items, .lines, undefined);
+                    const sel_bounds = sel_path.bounds;
 
                     for (self.canvas.state.paths.items(.bounds)) |path_bounds, path_i| {
                         
@@ -275,24 +276,14 @@ pub const Selection = struct {
                         // Skip paths whose bounds are much larger than the
                         // selection area. A seleciton path can never select a
                         // larger path than itself.
-                        // TODO: Move area calc of 'rect' path (bounds) to
-                        // `Path` struct.
-                        const path_bounds_area = blk: {
-                            const dx = std.math.fabs(path_bounds[1].x - path_bounds[0].x);
-                            const dy = std.math.fabs(path_bounds[1].y - path_bounds[0].y);
-                            break :blk dx * dy;
-                        };
-                        const sel_bounds_area = blk :{
-                            const dx = std.math.fabs(sel_bounds[1].x - sel_bounds[0].x);
-                            const dy = std.math.fabs(sel_bounds[1].y - sel_bounds[0].y);
-                            break :blk dx * dy;
-                        };
+                        const path_bounds_area = path_bounds.area();
+                        const sel_bounds_area = sel_bounds.area();
                         if (sel_bounds_area < path_bounds_area*BOUNDS_LIMIT_SCALAR)
                             continue;
 
                         // Skip paths that do not overlap with the selection
                         // path.
-                        if (!doBoundsOverlap(path_bounds, sel_bounds))
+                        if (!sel_bounds.overlap(path_bounds))
                             continue;
 
                         const path = self.canvas.state.paths.get(path_i);
@@ -369,45 +360,6 @@ pub const Selection = struct {
 
         if (t < 0) return false;
         return true;
-    }
-
-    // TODO: The `Path` struct should have support for more than just Bezier
-    // curves. Then use the 'bounds' from that struct instead.
-    fn calcBoundsForPoints(points: []const Vec2) [2]Vec2 {
-        var bounds_out: ?[2]Vec2 = null;
-
-        for (points) |point| {
-            if (bounds_out) |*bounds| {
-                if (point.x < bounds[0].x)
-                    bounds[0].x = point.x;
-
-                if (point.y < bounds[0].y)
-                    bounds[0].y = point.y;
-
-                if (point.x > bounds[1].x)
-                    bounds[1].x = point.x;
-
-                if (point.y > bounds[1].y)
-                    bounds[1].y = point.y;
-            } else {
-                bounds_out = .{ point, point };
-            }
-        }
-
-        return bounds_out.?;
-    }
-
-    // TODO: Should be part of `Path`
-    inline fn doBoundsOverlap(b0: [2]Vec2, b1: [2]Vec2) bool {
-        return isPointInBounds(b0[0], b1) or isPointInBounds(b0[1], b1)
-            or isPointInBounds(b1[0], b0) or isPointInBounds(b1[1], b0);
-    }
-
-    // TODO: Should be part of `Path`
-    inline fn isPointInBounds(p: Vec2, bounds: [2]Vec2) bool {
-        return 
-            (p.x > bounds[0].x and p.x < bounds[1].x) and
-            (p.y > bounds[0].y and p.y < bounds[1].y);
     }
 
     fn isPathInSelection(self: *Selection, path: Path, points_to_check: usize) bool {

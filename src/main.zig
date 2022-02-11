@@ -346,24 +346,20 @@ pub const VnCtx = struct {
         vn.vg.fill();
     }
 
-    fn drawBounds(vn: VnCtx, bounds: ?[2]Vec2) void {
-        if (bounds) |b| {
-            const b_lower = vn.view.canvasToView(b[0]);
-            const b_upper = vn.view.canvasToView(b[1]);
+    fn drawBounds(vn: VnCtx, bounds: Path.Bounds) void {
+        const b_lower = vn.view.canvasToView(bounds.a);
+        const b_upper = vn.view.canvasToView(bounds.b);
 
-            vn.vg.beginPath();
-            vn.vg.rect(
-                @floatCast(f32, b_lower.x),
-                @floatCast(f32, b_lower.y),
-                @floatCast(f32, b_upper.x - b_lower.x),
-                @floatCast(f32, b_upper.y - b_lower.y));
+        vn.vg.beginPath();
+        vn.vg.rect(
+            @floatCast(f32, b_lower.x),
+            @floatCast(f32, b_lower.y),
+            @floatCast(f32, b_upper.x - b_lower.x),
+            @floatCast(f32, b_upper.y - b_lower.y));
 
-            vn.vg.strokeColor(nanovg.nvgRGBA(30, 255, 255, 100));
-            vn.vg.strokeWidth(2.0);
-            vn.vg.stroke();
-        } else {
-            log.warn("Bounds was not initialized????", .{});
-        }
+        vn.vg.strokeColor(nanovg.nvgRGBA(30, 255, 255, 100));
+        vn.vg.strokeWidth(2.0);
+        vn.vg.stroke();
     }
 };
 
