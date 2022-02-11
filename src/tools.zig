@@ -7,6 +7,7 @@ const MouseState = @import("root").MouseState;
 const Vec2 = @import("root").Vec2;
 const Path = @import("Path.zig");
 const BezierFit = @import("bezier_fit.zig");
+const Canvas = @import("Canvas.zig");
 
 const MouseButton = glfw.mouse_button.MouseButton;
 
@@ -99,15 +100,19 @@ pub const Pencil = struct {
     const RETAIN_POINTS = true;
     const MIN_DIST = 1.0;
 
-    vn: *VnCtx,
+    mouse: *MouseState,
+    view: *VnCtx.View,
+    canvas: *Canvas,
     points: *std.ArrayList(Vec2),
     fitter: BezierFit,
 
     stroke_scaling: bool = false,
 
-    pub fn init(vn: *VnCtx, points_buf: *std.ArrayList(Vec2), fitter: BezierFit) Pencil {
+    pub fn init(mouse: *MouseState, view: *VnCtx.View, canvas: *Canvas, points_buf: *std.ArrayList(Vec2), fitter: BezierFit) Pencil {
         return .{
-            .vn = vn,
+            .mouse = mouse,
+            .view = view,
+            .canvas = canvas,
             .points = points_buf,
             .fitter = fitter,
         };
@@ -132,12 +137,12 @@ pub const Pencil = struct {
                 if (RETAIN_POINTS)
                     self.points.clearRetainingCapacity();
 
-                try self.points.append(self.vn.view.viewToCanvas(self.vn.mouse.pos));
+                try self.points.append(self.view.viewToCanvas(self.mouse.pos));
             },
 
             .release => {
                 const p_prev = self.points.items[self.points.items.len-1];
-                const p = self.vn.view.viewToCanvas(self.vn.mouse.pos);
+                const p = self.view.viewToCanvas(self.mouse.pos);
 
                 // If the release position is not yet in the list, add it.
                 if (p_prev.x != p.x and p_prev.y != p.y) {
@@ -150,18 +155,14 @@ pub const Pencil = struct {
                 // If there are more than 1 items in the list, perform the
                 // fitting operation.
                 if (self.points.items.len > 1) {
-                    var fitted = self.fitter.fit(self.points.items, self.vn.view.scale);
-                    var path = try Path.initFromArray(&fitted);
+                    var fitted = self.fitter.fit(self.points.items, self.view.scale);
 
-                    if (self.stroke_scaling) {
-                        path.setWidth(.{ .scaling = 2.0 / @floatCast(f32, self.vn.view.scale) });
-                    } else {
-                        path.setWidth(.{ .fixed = 2.0 });
-                    }
-
-                    // TODO: Should this be here? Maybe save the output
-                    // somewhere and then save it on `update`
-                    self.vn.addPath(path);
+                    self.canvas.addPath(.bezier, fitted.toOwnedSlice(), 
+                        if (self.stroke_scaling)
+                            .{ .scaling = 2.0 / @floatCast(f32, self.view.scale) }
+                        else
+                            .{ .fixed = 2.0 }
+                    ) catch unreachable;
                 }
 
                 if (!RETAIN_POINTS)
@@ -175,11 +176,11 @@ pub const Pencil = struct {
 
     /// This function adds new points to the list while dragging the mouse.
     fn onMousePos(self: *Pencil, pos: Vec2) !void {
-        if (self.vn.mouse.states.left == .press) {
+        if (self.mouse.states.left == .press) {
             //const points = self.points.items;
 
-            const mouse_canvas = self.vn.view.viewToCanvas(pos);
-            //const scale = self.vn.view.scale;
+            const mouse_canvas = self.view.viewToCanvas(pos);
+            //const scale = self.view.scale;
             //if (mouse_canvas.distSqr(points[points.len-1]) >=
             //    (MIN_DIST*MIN_DIST / (scale*scale))) {
             //    try self.points.append(mouse_canvas);
@@ -196,11 +197,11 @@ pub const Pencil = struct {
             // TODO: drawLines helper function (already in VnCtx)
             vg.beginPath();
 
-            const p = self.vn.view.canvasToView(self.points.items[0]);
+            const p = self.view.canvasToView(self.points.items[0]);
             vg.moveTo(@floatCast(f32, p.x), @floatCast(f32, p.y));
 
             for (self.points.items[1..]) |point| {
-                const p_screen = self.vn.view.canvasToView(point);
+                const p_screen = self.view.canvasToView(point);
                 vg.lineTo(@floatCast(f32, p_screen.x), @floatCast(f32, p_screen.y));
             }
             vg.stroke();
@@ -209,15 +210,27 @@ pub const Pencil = struct {
 };
 
 pub const Selection = struct {
+    /// The distance between sample points when drawing the selection shape.
     const MIN_DIST = 10.0;
+    /// Number of points on a path to test if they are inside the selection
+    /// path.
     const POINTS_TO_CHECK = 10;
+    /// Sclar used on path area used to check if the bounds of a selection could
+    /// possibly select the path. It means that the selected area should be at
+    /// least this percentage of the path bounds.
+    const BOUNDS_LIMIT_SCALAR = 0.7;
 
-    vn: *VnCtx,
+    mouse: *MouseState,
+    view: *VnCtx.View,
+    canvas: *Canvas,
+
     points: *std.ArrayList(Vec2),
 
-    pub fn init(vn: *VnCtx, points_buf: *std.ArrayList(Vec2)) Selection {
+    pub fn init(mouse: *MouseState, view: *VnCtx.View, canvas: *Canvas, points_buf: *std.ArrayList(Vec2)) Selection {
         return .{
-            .vn = vn,
+            .mouse = mouse,
+            .view = view,
+            .canvas = canvas,
             .points = points_buf,
         };
     }
@@ -239,7 +252,7 @@ pub const Selection = struct {
                 if (self.points.items.len > 0)
                     self.points.clearRetainingCapacity();
 
-                try self.points.append(self.vn.view.viewToCanvas(self.vn.mouse.pos));
+                try self.points.append(self.view.viewToCanvas(self.mouse.pos));
             },
 
             .release => {
@@ -251,12 +264,12 @@ pub const Selection = struct {
                     // Close the loop
                     try self.points.append(self.points.items[0]);
 
-                    const bounds = calcBoundsForPoints(self.points.items);
+                    const sel_bounds = calcBoundsForPoints(self.points.items);
 
-                    for (self.vn.paths.items) |path, path_index| {
-
+                    for (self.canvas.state.paths.items(.bounds)) |path_bounds, path_i| {
+                        
                         // Skip paths that are already selected.
-                        if (std.mem.indexOfScalar(usize, self.vn.selected.items, path_index)) |_|
+                        if (std.mem.indexOfScalar(u32, self.canvas.selected.items, @intCast(u32, path_i))) |_|
                             continue;
 
                         // Skip paths whose bounds are much larger than the
@@ -265,34 +278,36 @@ pub const Selection = struct {
                         // TODO: Move area calc of 'rect' path (bounds) to
                         // `Path` struct.
                         const path_bounds_area = blk: {
-                            const b = path.bounds.?;
-                            const dx = std.math.fabs(b[1].x - b[0].x);
-                            const dy = std.math.fabs(b[1].y - b[0].y);
+                            const dx = std.math.fabs(path_bounds[1].x - path_bounds[0].x);
+                            const dy = std.math.fabs(path_bounds[1].y - path_bounds[0].y);
                             break :blk dx * dy;
                         };
                         const sel_bounds_area = blk :{
-                            const dx = std.math.fabs(bounds[1].x - bounds[0].x);
-                            const dy = std.math.fabs(bounds[1].y - bounds[0].y);
+                            const dx = std.math.fabs(sel_bounds[1].x - sel_bounds[0].x);
+                            const dy = std.math.fabs(sel_bounds[1].y - sel_bounds[0].y);
                             break :blk dx * dy;
                         };
-                        if (sel_bounds_area < path_bounds_area*0.7)
+                        if (sel_bounds_area < path_bounds_area*BOUNDS_LIMIT_SCALAR)
                             continue;
 
                         // Skip paths that do not overlap with the selection
                         // path.
-                        if (!doBoundsOverlap(path.bounds.?, bounds))
+                        if (!doBoundsOverlap(path_bounds, sel_bounds))
                             continue;
+
+                        const path = self.canvas.state.paths.get(path_i);
 
                         // Skip paths from which at least one test point
                         // is not inside of the selection path.
-                        if (!self.isPathInSelection(path))
+                        if (!self.isPathInSelection(path, POINTS_TO_CHECK))
                             continue;
 
-                        try self.vn.selected.append(path_index);
+                        self.canvas.selectPath(path_i);
+
                     }
                 } else {
                     // This was a single click somewhere else. Deselect.
-                    self.vn.selected.clearRetainingCapacity();
+                    self.canvas.selected.clearRetainingCapacity();
                 }
 
                 self.points.clearRetainingCapacity();
@@ -305,11 +320,11 @@ pub const Selection = struct {
 
     /// This function adds new points to the list while dragging the mouse.
     fn onMousePos(self: *Selection, pos: Vec2) !void {
-        if (self.vn.mouse.states.left == .press) {
+        if (self.mouse.states.left == .press) {
             const points = self.points.items;
 
-            const mouse_canvas = self.vn.view.viewToCanvas(pos);
-            const scale = self.vn.view.scale;
+            const mouse_canvas = self.view.viewToCanvas(pos);
+            const scale = self.view.scale;
             if (mouse_canvas.distSqr(points[points.len-1]) >=
                 (MIN_DIST*MIN_DIST / (scale*scale))) {
                 try self.points.append(mouse_canvas);
@@ -324,11 +339,11 @@ pub const Selection = struct {
             // TODO: drawLines helper function (already in VnCtx)
             vg.beginPath();
 
-            const p = self.vn.view.canvasToView(self.points.items[0]);
+            const p = self.view.canvasToView(self.points.items[0]);
             vg.moveTo(@floatCast(f32, p.x), @floatCast(f32, p.y));
 
             for (self.points.items[1..]) |point| {
-                const p_screen = self.vn.view.canvasToView(point);
+                const p_screen = self.view.canvasToView(point);
                 vg.lineTo(@floatCast(f32, p_screen.x), @floatCast(f32, p_screen.y));
             }
             vg.stroke();
@@ -395,13 +410,23 @@ pub const Selection = struct {
             (p.y > bounds[0].y and p.y < bounds[1].y);
     }
 
-    fn isPathInSelection(self: *Selection, path: Path) bool {
-        // Test `POINTS_TO_CHECK` samples on the bezier path, and if they
+    fn isPathInSelection(self: *Selection, path: Path, points_to_check: usize) bool {
+        // Test `points_to_check` samples on the bezier path, and if they
         // are all inside, assume the rest is as well.
         var i: usize = 0;
-        while (i < POINTS_TO_CHECK) : (i += 1) {
-            const u = 1.0 / @intToFloat(f32, POINTS_TO_CHECK) * @intToFloat(f32, i);
-            const p = path.eval(u);
+        while (i < points_to_check) : (i += 1) {
+            const u = 1.0 / @intToFloat(f32, points_to_check) * @intToFloat(f32, i);
+            const p_err = switch (path.tag) {
+                .bezier => blk: {
+                    const bezier = self.canvas.state.beziers.get(path.extra_index);
+                    break :blk path.eval(bezier, u);
+                },
+
+                .lines,
+                .rect => path.eval(null, u),
+            };
+            const p = p_err catch |err|
+                std.debug.panic("Error while evaluating path: {}\n", .{err});
             const points = self.points.items;
 
             // Check if a vertical ray passes through any of the line segments

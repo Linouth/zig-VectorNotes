@@ -26,10 +26,6 @@ pub fn RingBuffer(comptime T: type, size: usize) type {
 
         items: [size]?T = .{null} ** size,
 
-        pub fn init() Self {
-            return .{};
-        }
-
         pub fn initFromSlice(items: []const T) Self {
             if (items.len > size)
                 log.warn(

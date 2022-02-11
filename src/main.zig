@@ -4,6 +4,7 @@ const gl = @import("zgl");
 
 const nanovg = @import("nanovg.zig");
 const vec = @import("vec.zig");
+const Canvas = @import("Canvas.zig");
 const Path = @import("Path.zig");
 const BezierFit = @import("bezier_fit.zig");
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
@@ -36,8 +37,6 @@ fn keyCallback(
                 vn.view.scale = 1.0;
             },
 
-            .p => std.debug.print("{any}\n", .{vn.paths.items[vn.paths.items.len-1].points}),
-
             .d => vn.debug = !vn.debug,
             .b => vn.draw_bounds = !vn.draw_bounds,
 
@@ -53,33 +52,17 @@ fn keyCallback(
             },
 
             .z => if (mods.control and mods.shift) {
-                vn.redo();
+                vn.canvas.redo();
             } else if (mods.control) {
-                vn.undo();
+                vn.canvas.undo();
             },
 
-            .n => vn.clearPaths(),
+            .n => vn.canvas.clearPaths(),
 
             .one => vn.active_tool = &vn.tools.items[0],
             .two => vn.active_tool = &vn.tools.items[1],
 
-            .delete, .backspace => {
-                vn.saveHistory();
-
-                // We will be using `swapRemove` to remove items from the paths
-                // list. This changes the index of the last element. Go through
-                // the indices from last to first so that this wont be an issue.
-                std.sort.sort(usize, vn.selected.items, {}, comptime std.sort.desc(usize));
-
-                for (vn.selected.items) |sel| {
-                    var p = vn.paths.swapRemove(sel);
-
-                    // Free the removed path
-                    p.deinit();
-                }
-
-                vn.selected.clearRetainingCapacity();
-            },
+            .delete, .backspace => vn.canvas.deleteSelectedPaths(),
 
             else => {},
         },
@@ -220,7 +203,19 @@ pub const VnCtx = struct {
 
     vg: nanovg.Wrapper,
 
-    view: struct {
+    view: View,
+    mouse: MouseState,
+
+    tools: std.ArrayList(tools.Tool),
+    active_tool: ?*tools.Tool = null,
+
+    canvas: Canvas,
+
+    debug: bool = false,
+    draw_bounds: bool = false,
+    stroke_scaling: bool = false,
+
+    pub const View = struct {
         width: u32,
         height: u32,
         origin: Vec2,
@@ -233,28 +228,7 @@ pub const VnCtx = struct {
         pub fn canvasToView(self: @This(), p: Vec2) Vec2 {
             return p.sub(self.origin).scalarMult(self.scale);
         }
-    },
-
-    mouse: MouseState,
-
-    tools: std.ArrayList(tools.Tool),
-    active_tool: ?*tools.Tool = null,
-
-    paths: std.ArrayList(Path),
-    selected: std.ArrayList(usize),
-
-    history: struct {
-        buf: RingBuffer(std.ArrayList(Path), 25),
-        index: usize = 0,
-
-        /// Flag to make sure that `undo` will save the current state before
-        /// undoing.
-        outdated: bool = true,
-    },
-
-    debug: bool = false,
-    draw_bounds: bool = false,
-    stroke_scaling: bool = false,
+    };
 
     pub fn init(allocator: std.mem.Allocator, vg: nanovg.Wrapper, width: u32, height: u32) VnCtx {
         return VnCtx {
@@ -270,124 +244,18 @@ pub const VnCtx = struct {
 
             .tools = std.ArrayList(tools.Tool).init(allocator),
 
-            .paths = std.ArrayList(Path).init(allocator),
-            .selected = std.ArrayList(usize).init(allocator),
-
-            .history = .{ .buf = RingBuffer(std.ArrayList(Path), 25).init() },
+            .canvas = Canvas.init(allocator),
         };
     }
 
     pub fn deinit(self: VnCtx) void {
-        for (self.paths.items) |path| {
-            path.deinit();
-        }
-        self.paths.deinit();
+        self.state.deinit();
 
         self.tools.deinit();
     }
 
     pub fn addTool(self: *VnCtx, tool: tools.Tool) !void {
         try self.tools.append(tool);
-    }
-
-    pub fn addPath(self: *VnCtx, new_path: Path) void {
-        self.saveHistory();
-
-        // Add the new path to the pathlist
-        self.paths.append(new_path) catch unreachable;
-    }
-
-    pub fn clearPaths(self: *VnCtx) void {
-        self.saveHistory();
-
-        for (self.paths.items) |path| {
-            path.deinit();
-        }
-        self.paths.clearRetainingCapacity();
-
-        // The selection indices are not relevant anymore.
-        self.selected.clearRetainingCapacity();
-    }
-
-    pub fn translatePath(self: *VnCtx, path_index: usize, translation: Vec2) void {
-        self.saveHistory();
-
-        self.paths.items[path_index] = self.paths.items[path_index].add(translation);
-    }
-
-    /// Saves the current state to the history list. Calling this function also
-    /// flags the history as outdated, which makes sure that `undo` will save
-    /// the state before the next undo action.
-    fn saveHistory(self: *VnCtx) void {
-        // Set the new startpoint of the history buffer to the current history
-        // index. This is done so that you cannot redo something after adding a
-        // new path.
-        self.history.buf.setRelStart(@intCast(isize, self.history.index));
-
-        // Only add the current state if we are not already using a previous
-        // state.
-        if (self.history.outdated) {
-            // Make a copy of the current state
-            var arr_new = dupePathsArray(self.allocator, self.paths);
-
-            // Add the current state to the history buffer. If the buffer is full,
-            // replace the first item. If a previous entry is overwritten, free the
-            // corresponding memory.
-            if (self.history.buf.pushFront(arr_new)) |prev_state| {
-                freePathsArray(prev_state);
-            }
-        }
-
-        // Reset history index. Essentially invalidating 'newer' (not redone)
-        // entries.
-        self.history.index = 0;
-
-        // Flag next undo to save the state before undoing (it __should__
-        // be a new unknown state)
-        self.history.outdated = true;
-    }
-
-    pub fn undo(self: *VnCtx) void {
-        // Check if the current state is already in the history buffer. If it is
-        // not, save the current state.
-        if (self.history.outdated) {
-            self.history.outdated = false;
-
-            var arr_new = dupePathsArray(self.allocator, self.paths);
-            if (self.history.buf.pushFront(arr_new)) |to_free| {
-                freePathsArray(to_free);
-            }
-        }
-
-        // Make sure that we stay inside the buffer bounds
-        if (self.history.index >= self.history.buf.len()-1)
-            return;
-
-        self.history.index += 1;
-
-        if (self.history.buf.get(self.history.index)) |hist| {
-            freePathsArray(self.paths);
-            self.paths = dupePathsArray(self.allocator, hist);
-        } else {
-            log.err("Could not get the proper history index..? index = {}",
-                .{self.history.index});
-        }
-    }
-
-    pub fn redo(self: *VnCtx) void {
-        // Make sure that we can redo something.
-        if (self.history.index == 0)
-            return;
-
-        self.history.index -= 1;
-
-        if (self.history.buf.get(self.history.index)) |hist| {
-            freePathsArray(self.paths);
-            self.paths = dupePathsArray(self.allocator, hist);
-        } else {
-            log.err("Could not get the proper history index..? index = {}",
-                .{self.history.index});
-        }
     }
 
     fn drawLines(vn: VnCtx, data: []const Vec2) void {
@@ -546,11 +414,11 @@ pub fn main() anyerror!void {
     var points_buf = std.ArrayList(Vec2).init(allocator);
     defer points_buf.deinit();
 
-    var pencil = tools.Pencil.init(&vn, &points_buf, fitter);
+    var pencil = tools.Pencil.init(&vn.mouse, &vn.view, &vn.canvas, &points_buf, fitter);
     try vn.addTool(pencil.tool());
     vn.active_tool = &vn.tools.items[0];
 
-    var selection = tools.Selection.init(&vn, &points_buf);
+    var selection = tools.Selection.init(&vn.mouse, &vn.view, &vn.canvas, &points_buf);
     try vn.addTool(selection.tool());
 
     //const tmp = .{ vec.Vec2(f64){ .x = 1.25e+02, .y = 1.68e+02 }, vec.Vec2(f64){ .x = 1.773480465119931e+02, .y = 1.7396715503155994e+02 }, vec.Vec2(f64){ .x = 3.234362350902816e+02, .y = 1.5025505963887355e+02 }, vec.Vec2(f64){ .x = 3.39e+02, .y = 8.8e+01 }, vec.Vec2(f64){ .x = 3.396387175245047e+02, .y = 8.544512990198099e+01 }, vec.Vec2(f64){ .x = 3.3986985788844277e+02, .y = 7.971746447211069e+01 }, vec.Vec2(f64){ .x = 3.37e+02, .y = 7.9e+01 }, vec.Vec2(f64){ .x = 3.3342187291728004e+02, .y = 7.810546822932001e+01 }, vec.Vec2(f64){ .x = 3.2868772964418076e+02, .y = 7.7e+01 }, vec.Vec2(f64){ .x = 3.25e+02, .y = 7.7e+01 }, vec.Vec2(f64){ .x = 3.189595085506635e+02, .y = 7.7e+01 }, vec.Vec2(f64){ .x = 3.108322484209403e+02, .y = 7.554193789476493e+01 }, vec.Vec2(f64){ .x = 3.05e+02, .y = 7.7e+01 }, vec.Vec2(f64){ .x = 2.367494113614384e+02, .y = 9.406264715964039e+01 }, vec.Vec2(f64){ .x = 2.9718211610905115e+02, .y = 1.7709051185459845e+02 }, vec.Vec2(f64){ .x = 2.74e+02, .y = 2.08e+02 }, vec.Vec2(f64){ .x = 2.7182194294611577e+02, .y = 2.1090407607184562e+02 }, vec.Vec2(f64){ .x = 2.685704276260913e+02, .y = 2.1342957237390868e+02 }, vec.Vec2(f64){ .x = 2.66e+02, .y = 2.16e+02 }, vec.Vec2(f64){ .x = 2.6304147219428637e+02, .y = 2.1895852780571363e+02 }, vec.Vec2(f64){ .x = 2.593402088286836e+02, .y = 2.214948433784873e+02 }, vec.Vec2(f64){ .x = 2.56e+02, .y = 2.24e+02 }, vec.Vec2(f64){ .x = 2.5246602133283852e+02, .y = 2.266504840003711e+02 }, vec.Vec2(f64){ .x = 2.4756088299622985e+02, .y = 2.2721955850188507e+02 }, vec.Vec2(f64){ .x = 2.44e+02, .y = 2.29e+02 }, vec.Vec2(f64){ .x = 2.0587747898828965e+02, .y = 2.4806126050585516e+02 }, vec.Vec2(f64){ .x = 1.15e+02, .y = 2.6746298242540155e+02 }, vec.Vec2(f64){ .x = 1.15e+02, .y = 3.2e+02 }, vec.Vec2(f64){ .x = 1.15e+02, .y = 3.298355327136036e+02 }, vec.Vec2(f64){ .x = 1.257114562527355e+02, .y = 3.3867786406318385e+02 }, vec.Vec2(f64){ .x = 1.35e+02, .y = 3.41e+02 }, vec.Vec2(f64){ .x = 1.73555792689085e+02, .y = 3.506389481722712e+02 }, vec.Vec2(f64){ .x = 2.1438527555033102e+02, .y = 3.503463533662164e+02 }, vec.Vec2(f64){ .x = 2.53e+02, .y = 3.6e+02 } };
@@ -574,17 +442,23 @@ pub fn main() anyerror!void {
                 tool.draw(vg);
             }
 
-            for (vn.paths.items) |path| {
+            const paths = vn.canvas.state.paths.slice();
+
+            for (paths.items(.bounds)) |bounds, i| {
+                // TODO: Check if bounds fit on screen
+
+                if (vn.draw_bounds) {
+                    vn.drawBounds(bounds);
+                }
+
+                const path = vn.canvas.state.paths.get(i);
+
                 vg.strokeColor(nanovg.nvgRGBA(255, 0, 0, 255));
                 vg.strokeWidth(2.0);
                 vn.drawPath(path);
 
                 if (vn.debug) {
                     vn.drawCtrl(path.points);
-                }
-
-                if (vn.draw_bounds) {
-                    vn.drawBounds(path.bounds);
                 }
 
                 // Temporary to test segment code
@@ -608,8 +482,8 @@ pub fn main() anyerror!void {
                 //vg.fill();
             }
 
-            for (vn.selected.items) |index| {
-                const path = vn.paths.items[index];
+            for (vn.canvas.selected.items) |index| {
+                const path = vn.canvas.state.paths.get(index);
                 vn.drawCtrl(path.points);
 
                 vg.strokeColor(nanovg.nvgRGBA(30, 255, 255, 200));
